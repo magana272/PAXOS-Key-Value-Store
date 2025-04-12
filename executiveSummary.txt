@@ -1,0 +1,17 @@
+"Assignment overview"
+
+The purpose of the assignment was to teach students about PAXOS. In regard to PAXOS, it was
+intended to teach the student about consensus. The student will learn how PAXOS can handle failures, and the types
+of failures PAXOS can handle. Additionally, the student will
+learn more about systems with more complex RMI handling's.
+
+“Technical impression”s
+
+Overall, I really enjoyed this project. I was initially pretty intimidated by this project.
+PAXOS, honestly, did not make sense at first. It was a bit confusing about who should take on what roles, or even reasoning
+about how consensus is reached in the protocol. Technically speaking, the use of RMI was much easier this time around, or even just thinking about
+network communication in a system like. A issue that I ran into was: "If all nodes act as all roles why do i have to accept AND learn". However, if a node fails to receive
+and accept it would not commit. Therefore, it realise on its peers to inform it on new values.
+There is plenty more that can be achieved with this project. I want to make the leader/leaner programmatically fail. Right now leaders can fail,
+as shown my testBash. However, it could be interesting for a leader to go down come back up.
+
