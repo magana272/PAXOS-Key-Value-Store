@@ -1,0 +1,25 @@
+# Build artifacts
+target/
+out/
+dependency-reduced-pom.xml
+*.jar
+*.class
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.project
+.classpath
+.settings/
+
+# OS metadata
+.DS_Store
+__MACOSX/
+Thumbs.db
+
+# Logs
+*.log
+hs_err_pid*.log
