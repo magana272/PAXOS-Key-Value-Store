@@ -1,12 +1,13 @@
 flowchart TD
-    Req([Client request]):::client --> Lookup["NodeAddress lookup"]:::acceptor
+    Req([Client request]):::client --> Lookup["Node receives Put/Get/Delete"]:::acceptor
     Lookup --> Alive{"leader.isAlive?"}
-    Alive -- no --> Elect["runLeaderElection (max-ID wins)"]:::fail
-    Elect --> Propose
-    Alive -- yes --> Propose["Leader.runProposalPhase<br/>(collect Vote majority)"]:::leader
-    Propose --> Accept["Leader.runAcceptPhase<br/>(collect Ack majority, ACCEPT_FAIL applied)"]:::leader
-    Accept --> Learn["Leader.runLearnPhase<br/>(KeyValueStore mutates, CommitStatus)"]:::leader
-    Learn --> Resp([TransactionPacket to client]):::client
+    Alive -- no --> Elect["LeaderElection.elect (max-ID wins)"]:::fail
+    Elect --> Forward
+    Alive -- yes --> Forward["Forward TransactionPacket to leader (hasTransaction)"]:::leader
+    Forward --> Propose["PaxosProposer: Phase 1 Propose<br/>(collect Ack majority via RmiTransport)"]:::leader
+    Propose --> Accept["PaxosProposer: Phase 2 Accept<br/>(strict majority, ACCEPT_FAIL applied)"]:::leader
+    Accept --> Apply["PaxosAcceptor.accept broadcasts Learn,<br/>PaxosLearner.apply mutates KeyValueStore"]:::leader
+    Apply --> Resp([Packet response to client]):::client
     classDef client fill:#bbdefb,stroke:#1976d2,color:#0d47a1
     classDef leader fill:#ffd54f,stroke:#f57c00,color:#bf360c
     classDef acceptor fill:#c8e6c9,stroke:#388e3c,color:#1b5e20

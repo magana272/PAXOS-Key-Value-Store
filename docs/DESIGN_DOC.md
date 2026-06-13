@@ -141,23 +141,39 @@ Every container exposes its node over the JVM RMI registry as `Node-<id>`. `node
 
 ```
 manuel.rpckvstore/
-  Client.java, BaseClient.java       -- REPL + connection logic
+  Client.java                        -- REPL + connection logic
+  Example.java                       -- bundled demo workload
   NodeAddress.java                   -- RMI address record + isAlive() health check
   Node/
-    Node.java                        -- node lifecycle, leader election, transaction entry point
-    BaseServer.java                  -- RMI registry bootstrap
-    Leader/Leader.java               -- leader-side driver for the three Paxos phases
-    Proposer/ProposerInterface.java  -- Propose phase RMI contract
-    Acceptor/AcceptorInterface.java  -- Accept phase RMI contract
+    Node.java                        -- RMI facade; delegates each BaseServer
+                                        method to a collaborator below
+    BaseServer.java                  -- aggregate remote interface; extends the
+                                        three role interfaces
+    PaxosConfig.java                 -- accept-phase timeout, retry count,
+                                        and injected fail rates
+    Proposer/
+      ProposerInterface.java         -- remote contract
+      PaxosProposer.java             -- bounded-retry two-phase driver
+    Acceptor/
+      AcceptorInterface.java         -- remote contract
+      PaxosAcceptor.java             -- promise state + broadcast-then-apply
     Learner/
-      LearnerInterface.java          -- Learn phase RMI contract
-      KeyValueStore.java             -- the actual map; PUT / GET / DELETE
-      KeyValue.java, LockState.java, CommitStatus.java
+      LearnerInterface.java          -- remote contract
+      PaxosLearner.java              -- applies committed packets
+      KeyValueStore.java             -- HashMap guarded by RW lock
+      KvTasks.java                   -- put / get / delete Callables
+      KeyValue.java, LockState.java
+    cluster/
+      PeerDirectory.java             -- live peer set
+      RmiTransport.java              -- single RMI lookup site
+      LeaderElection.java            -- max-id election
+      ClusterMembership.java         -- join, inform, connectToInitialNode
   Packet/
-    Packet.java, TransactionPacket.java, Vote.java, Ack.java, TYPE.java
+    Packet.java, PacketLogger.java
+    TransactionPacket.java, Vote.java, Ack.java, TYPE.java
 ```
 
-Every node implements `ProposerInterface`, `AcceptorInterface`, and `LearnerInterface` at once. The `Leader` class is a thin driver that walks the `nodeAddresses` set and calls each role through RMI.
+`Node` is a thin facade: it implements `BaseServer` (which extends `ProposerInterface`, `AcceptorInterface`, and `LearnerInterface`) and forwards each RMI call to the matching collaborator. `PaxosProposer` walks the `PeerDirectory` snapshot and drives the two-phase round through `RmiTransport`.
 
 ## Transaction Flow
 
@@ -178,23 +194,23 @@ Every node implements `ProposerInterface`, `AcceptorInterface`, and `LearnerInte
 
 ## In-memory Entities
 
-**KeyValueStore** -- the replicated map. Wraps a `Map<String, KeyValue>` guarded by a `LockState`. Exposes `put`, `get`, `delete`, and reports `CommitStatus` back through the Learn phase.
-
-**KeyValue** -- `key`, `value`. The unit stored in `KeyValueStore`.
+**KeyValueStore** -- the replicated map. Wraps a `HashMap<String, String>` guarded by a `ReentrantReadWriteLock`. Exposes `put`, `get`, `delete`; `put` refuses duplicate keys (returns `false`), `get` returns a sentinel constant when the key is missing, `delete` returns whether the key was present.
 
 **NodeAddress** -- `id`, `host`, `port`. Used both as a routing target (RMI lookup `Node-<id>`) and as a liveness probe (`isAlive()`).
 
-**PromisedSequenceNumber** (acceptor-local) -- the highest `n` an acceptor has promised. Drives the Phase 1 / Phase 2 reject path.
+**Promise** (acceptor-local, in `PaxosAcceptor`) -- the highest `n` an acceptor has promised. Drives the Phase 1 / Phase 2 reject path. Held as a nullable `Float` so the first proposal of a node's life is unconditionally accepted.
 
 ## Packet Types
 
-All RMI calls return one of the packet records in `manuel.rpckvstore.Packet`:
+All RMI calls take or return one of the records in `manuel.rpckvstore.Packet`:
 
-- `Packet` -- base envelope.
-- `TransactionPacket` -- client-visible transaction request / response (carries the operation, key, value, and result).
-- `Vote` -- acceptor's Phase 1 reply (`YES` or `NO`) plus the promised sequence number.
-- `Ack` -- acceptor's Phase 2 reply (accepted / ignored).
+- `Packet` -- request / response envelope. Carries the operation type, key, value, and (for responses) the result string.
+- `TransactionPacket` -- proposer-side wrapper around a `Packet` plus a `Vote`; sent from the receiving node to the leader's `hasTransaction`.
+- `Ack` (enum, `YES` / `NO`) -- acceptor's Phase 1 reply to `Propose(n)`.
+- `Vote` (enum, `YES` / `NO`) -- the proposer's per-peer tally derived from the Phase 1 `Ack`s.
 - `TYPE` (enum) -- `PUT`, `GET`, `DELETE`.
+
+Phase 2 returns a `Packet` directly; stale proposals come back with `response = "Ignored"` rather than a dedicated enum.
 
 ## State Lifecycle
 
@@ -265,8 +281,13 @@ Tests are layered:
 
 | Suite | What it covers |
 |---|---|
-| **NodeTest** | Single-node constructor, `KeyValueStore` semantics (put / get / delete, missing-key sentinel, duplicate refusal), `Propose()` promise tracking. |
+| **NodeTest** | Node facade: constructor wiring, peer set seeded with self, `Propose()` promise tracking through the delegated acceptor, two-node KV isolation. |
 | **WritePathTest** | In-process PROPOSE / ACCEPT / LEARN with `ACCEPT_FAIL = PROPOSE_FAIL = 0`. Covers PUT propagation, stale-sequence rejection, idempotent delete, duplicate-put refusal, GET as a no-op. |
+| **KeyValueStoreTest** | Direct concurrency test on `KeyValueStore`: 16 racing writers on the same key resolve to exactly one winner (regression test for the previous read-lock-for-writes bug). |
+| **TransactionPacketTest** | `Vote` argument is honored by the constructor (the previous version hardcoded `YES`). |
+| **PaxosLearnerTest** | Apply path in isolation: PUT writes, GET is read-only, DELETE removes. |
+| **PaxosAcceptorTest** | Promise monotonicity: first propose accepts, lower proposal rejected, higher proposal updates, accept below promise leaves the store unchanged. |
+| **LeaderElectionTest** | Max-id election picks the largest numeric id; `demote` clears the current leader. |
 | **RunCucumberTest** | BDD scenarios in `src/test/resources/features/kvstore.feature` backed by `KVStoreSteps`. |
 | **make smoke** | End-to-end PUT / GET round-trip against the live docker cluster. |
 
