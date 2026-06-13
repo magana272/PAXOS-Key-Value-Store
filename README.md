@@ -131,7 +131,7 @@ sequenceDiagram
 
 ## Leader Failing
 
-Before a node informs the leader, it checks `leader.isAlive()`. If the leader does not respond, the node assumes it is dead, removes it from the network, informs the other nodes of the new state, and runs a fresh leader election. The new leader then takes over driving transactions. An example script is provided in **testBash/testLeaderFail.sh**.
+Before a node informs the leader, it checks `leader.isAlive()`. If the leader does not respond, the node assumes it is dead, removes it from the network, informs the other nodes of the new state, and runs a fresh leader election. The new leader then takes over driving transactions. An example script is provided in **scripts/testLeaderFail.sh**.
 
 ```mermaid
 flowchart TD
@@ -402,8 +402,7 @@ make run-cluster
 # Run Client Nodes
 
 ```shell
-cd testBash
-bash Client.sh
+make run-client
 ```
 
 
@@ -437,7 +436,7 @@ make test
 
 Runs the full Maven test suite. It is broken into three pieces:
 
-- **NodeTest** (JUnit 5): single-node coverage of the constructor, KeyValueStore semantics (put/get/delete, missing-key sentinel, duplicate refusal), and the `Propose()` promise tracking. Eight multi-node placeholders are marked `@Disabled` because they need a running RMI cluster and are covered by the bash scripts under **testBash/** instead.
+- **NodeTest** (JUnit 5): single-node coverage of the constructor, KeyValueStore semantics (put/get/delete, missing-key sentinel, duplicate refusal), and the `Propose()` promise tracking. Eight multi-node placeholders are marked `@Disabled` because they need a running RMI cluster and are covered by the bash scripts under **scripts/** instead.
 - **WritePathTest** (JUnit 5): in-process exercise of the PROPOSE / ACCEPT / LEARN write path with zero simulated failure rate. Covers PUT propagation, stale-sequence rejection, idempotent delete, duplicate-put refusal, and GET as a no-op.
 - **RunCucumberTest** (Cucumber + JUnit Platform Suite): BDD scenarios in **src/test/resources/features/kvstore.feature** backed by the step definitions in **src/test/java/manuel/rpckvstore/bdd/steps/KVStoreSteps.java**. Same data contract as NodeTest, just written as Given / When / Then so the behavior is readable.
 
@@ -462,7 +461,7 @@ Latest run on **dev** and **main**: `Tests run: 35, Failures: 0, Errors: 0, Skip
 | `make run-node ID=N PORT=P` | starts a joining node |
 | `make run-client` | runs the client against 127.0.0.1:1099 |
 | `make run-cluster` | shells out to scripts/10Server.sh |
-| `make test-leader-fail` | shells out to testBash/testLeaderFail.sh |
+| `make test-leader-fail` | shells out to scripts/testLeaderFail.sh |
 | `make kill-ports` | kills stale java/rmiregistry processes on 1099-1110 |
 | `make docker-build` | builds the paxos-kvstore image |
 | `make docker-up` | starts the 5-node dockerized cluster |
