@@ -2,7 +2,6 @@ package manuel.rpckvstore;
 
 import manuel.rpckvstore.Node.BaseServer;
 import manuel.rpckvstore.Packet.Packet;
-import manuel.rpckvstore.Node.Learner.KeyValue;
 
 import java.rmi.RemoteException;
 

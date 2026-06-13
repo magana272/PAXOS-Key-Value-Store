@@ -39,8 +39,7 @@ public class NodeTest {
 
     @Test
     public void freshKeyValueStorePut() throws Exception {
-        newNode();
-        KeyValueStore kv = Node.getKv();
+        KeyValueStore kv = newNode().getKv();
 
         assertTrue(kv.put("k1", "v1"));
         assertEquals("v1", kv.get("k1"));
@@ -48,8 +47,7 @@ public class NodeTest {
 
     @Test
     public void putDuplicateKeyReturnsFalse() throws Exception {
-        newNode();
-        KeyValueStore kv = Node.getKv();
+        KeyValueStore kv = newNode().getKv();
         kv.put("dup", "first");
 
         assertFalse(kv.put("dup", "second"),
@@ -59,16 +57,14 @@ public class NodeTest {
 
     @Test
     public void getMissingKeyReturnsSentinel() throws Exception {
-        newNode();
-        KeyValueStore kv = Node.getKv();
+        KeyValueStore kv = newNode().getKv();
 
         assertEquals("KEY does not exist", kv.get("never-set"));
     }
 
     @Test
     public void deleteExistingKey() throws Exception {
-        newNode();
-        KeyValueStore kv = Node.getKv();
+        KeyValueStore kv = newNode().getKv();
         kv.put("k", "v");
 
         assertTrue(kv.delete("k"));
@@ -77,8 +73,7 @@ public class NodeTest {
 
     @Test
     public void deleteMissingKeyReturnsFalse() throws Exception {
-        newNode();
-        KeyValueStore kv = Node.getKv();
+        KeyValueStore kv = newNode().getKv();
 
         assertFalse(kv.delete("nope"));
     }
@@ -125,6 +120,18 @@ public class NodeTest {
         node.Propose(7.0f);
 
         assertEquals("7.0", node.getPromisedSequenceNumber());
+    }
+
+    @Test
+    public void twoNodesDoNotShareTheirKeyValueStore() throws Exception {
+        Node a = new Node("1", "localhost", "1099", 1099, 0f, 0f);
+        Node b = new Node("2", "localhost", "1100", 1100, 0f, 0f);
+
+        a.getKv().put("only-on-a", "1");
+
+        assertEquals("1", a.getKv().get("only-on-a"));
+        assertEquals("KEY does not exist", b.getKv().get("only-on-a"),
+                "each Node must own its own KeyValueStore instance");
     }
 
     @Test

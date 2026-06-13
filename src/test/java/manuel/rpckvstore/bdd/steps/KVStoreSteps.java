@@ -29,7 +29,7 @@ public class KVStoreSteps {
     @Given("a fresh single-node PAXOS cluster")
     public void freshSingleNodeCluster() throws Exception {
         node = new Node("bdd-1", "localhost", "1099", 1099, 0f, 0f);
-        kv = Node.getKv();
+        kv = node.getKv();
     }
 
     @Given("{string} is already set to {string}")

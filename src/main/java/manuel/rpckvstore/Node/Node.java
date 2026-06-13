@@ -21,10 +21,10 @@ public class Node implements BaseServer, Serializable {
 
 
     //  Handle the locks of this machine
-    static private KeyValueStore kv;
+    private KeyValueStore kv;
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
     private final ReentrantReadWriteLock.ReadLock kvReadLock = lock.readLock();
-    private final ReentrantReadWriteLock.ReadLock kvWriteLock = lock.readLock();
+    private final ReentrantReadWriteLock.WriteLock kvWriteLock = lock.writeLock();
     private final String NodeID;
     //  For connections:
     String InitializeNodeIP;
@@ -75,7 +75,7 @@ public class Node implements BaseServer, Serializable {
     public int getPortNumber() {
         return portNumber;
     }
-    public static KeyValueStore getKv() {
+    public KeyValueStore getKv() {
         return kv;
     }
 
@@ -87,7 +87,7 @@ public class Node implements BaseServer, Serializable {
         return kvReadLock;
     }
 
-    public ReentrantReadWriteLock.ReadLock getKvWriteLock() {
+    public ReentrantReadWriteLock.WriteLock getKvWriteLock() {
         return kvWriteLock;
     }
 
@@ -206,13 +206,6 @@ public class Node implements BaseServer, Serializable {
         }
     }
 
-    private Vote canCommit() {
-        if (this.lockState.equals(LockState.LOCKED)) {
-            return Vote.NO;
-        }
-        return Vote.YES;
-    }
-
     public Packet informLeaderOfTransaction(TransactionPacket packet, String leaderIP, String leaderport) throws RemoteException {
         if (!this.leader.isAlive()) {
             this.nodeAddresses.remove(leader);
@@ -240,42 +233,54 @@ public class Node implements BaseServer, Serializable {
 
     }
 
+    private static final int HAS_TRANSACTION_MAX_ATTEMPTS = 10;
+    private static final long ACCEPT_PHASE_TIMEOUT_MS = 100L;
+
     @Override
     public Packet hasTransaction(TransactionPacket tranPacket) throws RemoteException {
         tranPacket.getPacket().logRecievedRequest();
-        ArrayList<Vote> votes = new ArrayList<>();
-//      GET THE VOTES: Phase 1
+        for (int attempt = 0; attempt < HAS_TRANSACTION_MAX_ATTEMPTS; attempt++) {
+            Packet committed = runPaxosRound(tranPacket);
+            if (committed != null) {
+                return committed;
+            }
+            System.out.println("========Retrying Paxos (attempt " + (attempt + 1) + ")========");
+        }
+        throw new RemoteException("Paxos failed to reach consensus after "
+                + HAS_TRANSACTION_MAX_ATTEMPTS + " attempts");
+    }
+
+    private Packet runPaxosRound(TransactionPacket tranPacket) throws RemoteException {
+        // Phase 1: collect votes
         System.out.println("========GET THE VOTES: Phase 1: Propose Phase========");
         this.SequenceNumber = String.valueOf(Integer.parseInt(this.SequenceNumber) + 1);
         String curr = this.SequenceNumber + "." + this.NodeID;
+        ArrayList<Vote> votes = new ArrayList<>();
         for (NodeAddress p : getParticipants()) {
             System.out.println(p.toString());
-            Registry r = LocateRegistry.getRegistry(p.getIp(), Integer.parseInt(p.getPort()));
             try {
+                Registry r = LocateRegistry.getRegistry(p.getIp(), Integer.parseInt(p.getPort()));
                 BaseServer stub = (BaseServer) r.lookup("Node-" + p.getId());
-                Ack transactionPacket = stub.Propose(Float.parseFloat(curr));
-                if (transactionPacket == Ack.NO) {
-                    votes.add(Vote.NO);
-                } else {
-                    votes.add(Vote.YES);
-                }
+                Ack ack = stub.Propose(Float.parseFloat(curr));
+                votes.add(ack == Ack.NO ? Vote.NO : Vote.YES);
             } catch (NotBoundException e) {
                 throw new RuntimeException(e);
             }
-
         }
-//      If all voted to commit: Commit : Phase 2
-        Packet packet = null;
-        int length = nodeAddresses.size();
-        int majority = length / 2;
-        long yesVotes = votes.stream().filter(vote -> vote.equals(Vote.YES)).count();
+
+        int majority = nodeAddresses.size() / 2;
+        long yesVotes = votes.stream().filter(v -> v == Vote.YES).count();
+        if (yesVotes <= majority) {
+            return null;
+        }
+
+        // Phase 2: accept
         System.out.println("========GET THE : Phase 1: Accept Phase========");
-        ExecutorService executor = Executors.newFixedThreadPool(nodeAddresses.size());
-        List<Future<Packet>> futures = new ArrayList<>();
-        if (yesVotes > majority) {
-            Packet resPacket = null;
+        ExecutorService roundExecutor = Executors.newFixedThreadPool(nodeAddresses.size());
+        try {
+            List<Future<Packet>> futures = new ArrayList<>();
             for (NodeAddress p : nodeAddresses) {
-                futures.add(executor.submit(() -> {
+                futures.add(roundExecutor.submit(() -> {
                     try {
                         Registry r = LocateRegistry.getRegistry(p.getIp(), Integer.parseInt(p.getPort()));
                         BaseServer stub = (BaseServer) r.lookup("Node-" + p.getId());
@@ -289,7 +294,7 @@ public class Node implements BaseServer, Serializable {
             Packet committedPacket = null;
             for (Future<Packet> future : futures) {
                 try {
-                    Packet response = future.get(100, TimeUnit.MILLISECONDS); // timeout
+                    Packet response = future.get(ACCEPT_PHASE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
                     if (response != null) {
                         successCount++;
                         committedPacket = response;
@@ -300,23 +305,16 @@ public class Node implements BaseServer, Serializable {
                     System.err.println("Paxos is still alive. Majority node accepted");
                 }
             }
-
             System.out.println("========Number Of Accepted Node========");
             System.out.println(successCount);
             System.out.println("=======================================");
             if (successCount < majority || committedPacket == null) {
-                System.out.println("========Retrying Paxos========");
-                System.out.println(successCount);
-                System.out.println("=======================================");
-                return hasTransaction(tranPacket);
+                return null;
             }
             return committedPacket;
-        } else {
-            return hasTransaction(tranPacket);
-
+        } finally {
+            roundExecutor.shutdownNow();
         }
-
-
     }
 
     // Prepare phase of the Paxos algorithm
@@ -331,7 +329,6 @@ public class Node implements BaseServer, Serializable {
             System.out.println("PromisedSequenceNumber is null");
             System.out.printf("PromisedSequenceNumber is %s%n", id);
             this.PromisedSequenceNumber = String.valueOf(id);
-            this.kvReadLock.lock();
             return Ack.YES;
         } else if (id < Float.parseFloat(PromisedSequenceNumber)) {
             System.out.println("PromisedSequenceNumber is larger than proposed id");
@@ -341,7 +338,6 @@ public class Node implements BaseServer, Serializable {
 
             this.PromisedSequenceNumber = String.valueOf(id);
             System.out.printf("Promised is %s%n", this.PromisedSequenceNumber);
-            this.kvReadLock.lock();
             return Ack.YES;
         }
     }
@@ -360,10 +356,6 @@ public class Node implements BaseServer, Serializable {
     }
 
     private Packet failingAccept(float sequenceNumber, Packet packet) {
-        if (canCommit() == Vote.NO) {
-            this.kvWriteLock.unlock();
-            this.lockState = LockState.UNLOCKED;
-        }
         AcceptTask acceptTask = new AcceptTask(packet, ACCEPTOR_FAILRATE);
         Future<Packet> future = executor.submit(acceptTask);
         try {
@@ -398,54 +390,26 @@ public class Node implements BaseServer, Serializable {
 
     // Once the coordinator has received a majority of votes, it can commit the transaction
     private Packet commitPut(Packet packet) {
-        if (canCommit() == Vote.NO) {
-//           There was a majority. Force this write.
-            this.kvWriteLock.unlock();
-            this.lockState = LockState.UNLOCKED;
-        }
-        PutTask putTask = new PutTask(packet);
-        Future<Packet> future = executor.submit(putTask);
-        try {
-            return future.get();
-        } catch (InterruptedException | ExecutionException e) {
-            throw new RuntimeException(e);
-        }
-
+        return executeKvTask(new PutTask(kv, packet));
     }
-
 
     // Once the coordinator has received a majority of votes, it can commit the transaction
     private Packet deletePacket(Packet packet) {
-        if (canCommit() == Vote.NO) {
-//           There was a majority. Force this write.
-            this.kvWriteLock.unlock();
-            this.lockState = LockState.UNLOCKED;
-        }
-        DeleteTask putTask = new DeleteTask(packet);
-        Future<Packet> future = executor.submit(putTask);
-        try {
-            return future.get();
-        } catch (InterruptedException | ExecutionException e) {
-            throw new RuntimeException(e);
-        }
-
+        return executeKvTask(new DeleteTask(kv, packet));
     }
 
     // Once the coordinator has received a majority of votes, it can commit the transaction
     private Packet commitGet(Packet packet) {
-        if (canCommit() == Vote.NO) {
-//           There was a majority. Force this write.
-            this.kvWriteLock.unlock();
-            this.lockState = LockState.UNLOCKED;
-        }
-        GetTask putTask = new GetTask(packet);
-        Future<Packet> future = executor.submit(putTask);
+        return executeKvTask(new GetTask(kv, packet));
+    }
+
+    private Packet executeKvTask(Callable<Packet> task) {
+        Future<Packet> future = executor.submit(task);
         try {
             return future.get();
         } catch (InterruptedException | ExecutionException e) {
             throw new RuntimeException(e);
         }
-
     }
 
 
@@ -605,14 +569,16 @@ public class Node implements BaseServer, Serializable {
     }
 
     static class PutTask implements Callable<Packet> {
-        Packet p;
+        private final KeyValueStore kv;
+        private final Packet p;
 
-        PutTask(Packet p) {
+        PutTask(KeyValueStore kv, Packet p) {
+            this.kv = kv;
             this.p = p;
         }
 
         @Override
-        public Packet call() throws Exception {
+        public Packet call() {
             kv.put(p.getKey(), p.getValue());
             p.setResponse("KEY Value Successfully Set");
             p.logResponseServer();
@@ -621,36 +587,38 @@ public class Node implements BaseServer, Serializable {
     }
 
     static class GetTask implements Callable<Packet> {
-        Packet p;
+        private final KeyValueStore kv;
+        private final Packet p;
 
-        GetTask(Packet p) {
+        GetTask(KeyValueStore kv, Packet p) {
+            this.kv = kv;
             this.p = p;
         }
 
         @Override
-        public Packet call() throws Exception {
-            String res = kv.get(this.p.getKey());
-            this.p.setResponse(res);
+        public Packet call() {
+            p.setResponse(kv.get(p.getKey()));
             p.logResponseServer();
             return p;
         }
     }
 
     static class DeleteTask implements Callable<Packet> {
-        Packet p;
+        private final KeyValueStore kv;
+        private final Packet p;
 
-        DeleteTask(Packet p) {
+        DeleteTask(KeyValueStore kv, Packet p) {
+            this.kv = kv;
             this.p = p;
         }
 
         @Override
-        public Packet call() throws Exception {
+        public Packet call() {
             kv.delete(p.getKey());
             p.setResponse("Key-Value Successfully Deleted");
             p.logResponseServer();
             return p;
         }
-
     }
 
     class AcceptTask implements Callable<Packet> {
@@ -672,11 +640,11 @@ public class Node implements BaseServer, Serializable {
                 return null;
             } else {
                 for (NodeAddress node : nodeAddresses) {
-                    try{
-                    Registry registry = LocateRegistry.getRegistry(node.getIp(), Integer.parseInt(node.getPort()));
-                    BaseServer stub = (BaseServer) registry.lookup("Node-" + node.getId());
-                    stub.Learn(p);
-                    }catch(RemoteException e){
+                    try {
+                        Registry registry = LocateRegistry.getRegistry(node.getIp(), Integer.parseInt(node.getPort()));
+                        BaseServer stub = (BaseServer) registry.lookup("Node-" + node.getId());
+                        stub.Learn(p);
+                    } catch (RemoteException | NotBoundException e) {
                         System.out.println("Failed to learn node: " + node);
                     }
                 }
