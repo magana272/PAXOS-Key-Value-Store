@@ -175,7 +175,10 @@ public class Node implements BaseServer, Serializable {
             System.out.println("Node Registry started on port " + myPort);
 
             // Initialize the Node (Proposer/Acceptor/Learner roles)
-            BaseServer node = new Node(myID, initNode, initPort, port, .1F, .1F);
+            float acceptFail = Float.parseFloat(System.getenv().getOrDefault("ACCEPT_FAIL", "0.1"));
+            float proposeFail = Float.parseFloat(System.getenv().getOrDefault("PROPOSE_FAIL", "0.1"));
+            BaseServer node = new Node(myID, initNode, initPort, port, acceptFail, proposeFail);
+            ((Node) node).ServerAddress = myIP;
             BaseServer stub = (BaseServer) UnicastRemoteObject.exportObject(node, port);
             // Bind the node to the registry
             Registry registry = LocateRegistry.createRegistry(port);
