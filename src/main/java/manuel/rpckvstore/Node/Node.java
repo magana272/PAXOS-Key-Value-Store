@@ -69,7 +69,7 @@ public class Node implements BaseServer, Serializable {
         this.learner = new PaxosLearner(new KeyValueStore(), executor);
         this.acceptor = new PaxosAcceptor(config, executor, peers, transport, learner);
         this.proposer = new PaxosProposer(NodeID, peers, transport, config);
-        this.membership = new ClusterMembership(NodeID, ServerAddress, portNumber,
+        this.membership = new ClusterMembership(NodeID, () -> ServerAddress, portNumber,
                 InitializeNodeIP, InitializeNodePortNumber, peers, transport);
         this.election = new LeaderElection(peers);
     }

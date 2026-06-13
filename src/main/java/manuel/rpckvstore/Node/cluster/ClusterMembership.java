@@ -8,11 +8,12 @@ import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 import java.util.Set;
+import java.util.function.Supplier;
 
 public class ClusterMembership {
 
     private final String selfId;
-    private final String selfIp;
+    private final Supplier<String> selfIp;
     private final int selfPort;
     private final String initialNodeIp;
     private final String initialNodePort;
@@ -20,7 +21,7 @@ public class ClusterMembership {
     private final RmiTransport transport;
 
     public ClusterMembership(String selfId,
-                             String selfIp,
+                             Supplier<String> selfIp,
                              int selfPort,
                              String initialNodeIp,
                              String initialNodePort,
@@ -59,7 +60,7 @@ public class ClusterMembership {
         } catch (NotBoundException | RemoteException e) {
             throw new RuntimeException(e);
         }
-        String response = stub.join(selfId, selfIp, String.valueOf(selfPort));
+        String response = stub.join(selfId, selfIp.get(), String.valueOf(selfPort));
         System.out.println("Response from initial node: " + response);
         if (response.equals("Joined")) {
             System.out.println("Successfully joined the network.");
