@@ -23,7 +23,7 @@ public class WritePathTest {
     @BeforeEach
     public void freshNode() throws Exception {
         node = new Node("w-1", "localhost", "1099", 1099, 0f, 0f);
-        kv = Node.getKv();
+        kv = node.getKv();
     }
 
     private static Packet putPacket(String key, String value) {
