@@ -1,0 +1,11 @@
+.git/
+target/
+out/
+.idea/
+__MACOSX/
+*.log
+*.png
+*.PNG
+img/
+.vscode/
+.DS_Store

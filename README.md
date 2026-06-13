@@ -202,6 +202,43 @@ make help
 ```
 
 
+# Docker
+
+The same cluster can run as five containers on a user-defined bridge network, one Paxos node per container, with no port collisions on the host. Image build is multi-stage (Maven build then JRE runtime), so a host Java/Maven install is not required to run the dockerized cluster.
+
+```shell
+make docker-build    # build the paxos-kvstore image
+make docker-up       # start node0..node4 on the paxos_net bridge
+make docker-client   # interactive REPL against the live cluster
+make docker-test     # canned PUT/GET round-trip
+make docker-down     # tear it all down
+```
+
+The five services are `node0` (init) through `node4`. Joiners wait on `node0`'s TCP healthcheck on port 1099 via `depends_on: condition: service_healthy`, so they will not race the RMI registry bind. Container hostnames match service names, and `-Djava.rmi.server.hostname` is wired through `JAVA_TOOL_OPTIONS` so RMI stubs advertise reachable names.
+
+Simulated acceptor / proposer failure rates are read from `ACCEPT_FAIL` / `PROPOSE_FAIL` env vars (default `0.1`, matching the localhost flow). `docker-compose.yml` sets both to `0.0` for deterministic test runs; override per-service to demo failure recovery.
+
+Sample `make docker-client` session:
+
+```
+$ make docker-client
+PAXOS KV client. Commands:
+  put <key> <value>
+  get <key>
+  delete <key>
+  exit
+paxos> put HELLO WORLD
+Recieved Response (...):KEY Value Successfully Set
+paxos> get HELLO
+Recieved Response (...):WORLD
+paxos> delete HELLO
+Recieved Response (...):Key-Value Successfully Deleted
+paxos> exit
+```
+
+The friendly syntax is a thin bash wrapper around the existing `Client.java`; the underlying packet format documented in **Request Types** still works as a raw passthrough.
+
+
 # Running the Initial Node
 
 ```shell
@@ -418,4 +455,10 @@ Latest run on **dev** and **main**: `Tests run: 35, Failures: 0, Errors: 0, Skip
 | `make run-cluster` | shells out to testBash/10Server.sh |
 | `make test-leader-fail` | shells out to testBash/testLeaderFail.sh |
 | `make kill-ports` | kills stale java/rmiregistry processes on 1099-1110 |
+| `make docker-build` | builds the paxos-kvstore image |
+| `make docker-up` | starts the 5-node dockerized cluster |
+| `make docker-down` | tears the dockerized cluster down |
+| `make docker-test` | canned PUT/GET round-trip against the dockerized cluster |
+| `make docker-client` | interactive REPL against the dockerized cluster |
+| `make docker-logs` | follows docker compose logs |
 | `make help` | prints the same list |
