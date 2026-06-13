@@ -3,27 +3,34 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# shellcheck disable=SC1091
+. ./.env
+
+bash scripts/gen-compose.sh > docker-compose.yml
+
 NET="${PAXOS_NET:-paxos-key-value-store_paxos_net}"
 IMAGE="${PAXOS_IMAGE:-paxos-kvstore:latest}"
+EXPECTED_JOINERS=$((CLUSTER_SIZE - 1))
 
 cleanup() {
     docker compose down -v --remove-orphans >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
-echo "== Bringing up cluster =="
-docker compose up -d --build
+echo "== Bringing up $CLUSTER_SIZE-node cluster =="
+svcs=$(seq 0 $((CLUSTER_SIZE - 1)) | sed 's/^/node/' | tr '\n' ' ')
+docker compose up -d --build $svcs
 
-echo "== Waiting for cluster formation (4 joiners on node0) =="
+echo "== Waiting for cluster formation ($EXPECTED_JOINERS joiners on node0) =="
 joined=0
 for _ in $(seq 1 60); do
     joined=$(docker compose logs --no-color node0 2>/dev/null | grep -c "Node In Network" || true)
-    [ "$joined" -ge 4 ] && break
+    [ "$joined" -ge "$EXPECTED_JOINERS" ] && break
     sleep 1
 done
 
-if [ "$joined" -lt 4 ]; then
-    echo "FAIL: cluster did not form ($joined/4 joiners)"
+if [ "$joined" -lt "$EXPECTED_JOINERS" ]; then
+    echo "FAIL: cluster did not form ($joined/$EXPECTED_JOINERS joiners)"
     docker compose logs --no-color node0 || true
     exit 1
 fi
