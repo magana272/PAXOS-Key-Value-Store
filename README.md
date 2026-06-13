@@ -36,19 +36,23 @@ The leader runs three phases for every transaction. A strict majority of accepto
 
 ```mermaid
 flowchart LR
-    C[Client] -->|PUT / GET / DELETE| L((Leader Proposer))
-    L -->|prepare n| A1[Acceptor 1]
-    L -->|prepare n| A2[Acceptor 2]
-    L -->|prepare n| A3[Acceptor 3]
+    C[Client]:::client -->|PUT / GET / DELETE| L((Leader Proposer)):::leader
+    L -->|prepare n| A1[Acceptor 1]:::acceptor
+    L -->|prepare n| A2[Acceptor 2]:::acceptor
+    L -->|prepare n| A3[Acceptor 3]:::acceptor
     A1 -->|promise| L
     A2 -->|promise| L
     A3 -->|promise| L
     L -->|accept n,v| A1
     L -->|accept n,v| A2
     L -->|accept n,v| A3
-    A1 -.->|learn v| LR[(Replicated KV)]
+    A1 -.->|learn v| LR[(Replicated KV)]:::kv
     A2 -.->|learn v| LR
     A3 -.->|learn v| LR
+    classDef client fill:#bbdefb,stroke:#1976d2,color:#0d47a1
+    classDef leader fill:#ffd54f,stroke:#f57c00,color:#bf360c
+    classDef acceptor fill:#c8e6c9,stroke:#388e3c,color:#1b5e20
+    classDef kv fill:#e1bee7,stroke:#7b1fa2,color:#4a148c
 ```
 
 
@@ -59,11 +63,17 @@ The leader drives a three-phase exchange. A majority of acceptors must reply at 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant C as Client
-    participant L as Leader Proposer
-    participant A1 as Acceptor 1
-    participant A2 as Acceptor 2
-    participant A3 as Acceptor 3
+    box rgb(187,222,251) Client
+        participant C as Client
+    end
+    box rgb(255,213,79) Leader Proposer
+        participant L as Leader
+    end
+    box rgb(200,230,201) Acceptors
+        participant A1 as Acceptor 1
+        participant A2 as Acceptor 2
+        participant A3 as Acceptor 3
+    end
 
     C->>L: PUT key=k value=v
     Note over L,A3: Phase 1 - Propose
@@ -97,10 +107,16 @@ Acceptors fail at random with a 10 percent probability per accept. As long as a 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant L as Leader Proposer
-    participant A1 as Acceptor 1
-    participant A2 as Acceptor 2 (simulated fail)
-    participant A3 as Acceptor 3
+    box rgb(255,213,79) Leader Proposer
+        participant L as Leader
+    end
+    box rgb(200,230,201) Acceptors
+        participant A1 as Acceptor 1
+        participant A3 as Acceptor 3
+    end
+    box rgb(255,205,210) Failing acceptor
+        participant A2 as Acceptor 2
+    end
 
     L->>A1: accept(n, v)
     L->>A2: accept(n, v)
@@ -119,15 +135,50 @@ Before a node informs the leader, it checks `leader.isAlive()`. If the leader do
 
 ```mermaid
 flowchart TD
-    Start([Client request lands on a node]) --> Check{leader.isAlive?}
-    Check -- yes --> Forward[Forward transaction to leader]
-    Check -- no response --> Remove[Remove leader from nodeAddresses]
-    Remove --> Inform[Inform peers of new state]
-    Inform --> Elect[runLeaderElection]
-    Elect --> NewLeader[New leader chosen]
+    Start([Client request lands on a node]):::client --> Check{leader.isAlive?}
+    Check -- yes --> Forward[Forward transaction to leader]:::leader
+    Check -- no response --> Remove[Remove leader from nodeAddresses]:::fail
+    Remove --> Inform[Inform peers of new state]:::acceptor
+    Inform --> Elect[runLeaderElection]:::leader
+    Elect --> NewLeader[New leader chosen]:::leader
     NewLeader --> Forward
-    Forward --> Done([Phase 1 / 2 / 3 proceeds normally])
+    Forward --> Done([Phase 1 / 2 / 3 proceeds normally]):::acceptor
+    classDef client fill:#bbdefb,stroke:#1976d2,color:#0d47a1
+    classDef leader fill:#ffd54f,stroke:#f57c00,color:#bf360c
+    classDef acceptor fill:#c8e6c9,stroke:#388e3c,color:#1b5e20
+    classDef fail fill:#ffcdd2,stroke:#c62828,color:#b71c1c
 ```
+
+
+## Leader Election
+
+Election itself is a deterministic **max-ID wins** rule, not a voting round. Every node runs `runLeaderElection()` in **Node.java** independently and walks its own `nodeAddresses` set, picking the `NodeAddress` whose numeric ID is the largest. Because every node keeps the same view of `nodeAddresses` through the `inform` / `informOfNewNode` flow, all of them converge on the same leader without exchanging extra messages.
+
+It is triggered in three situations:
+
+- The very first transaction lands on a node and `leader` is still `null` (first call to `Put` / `Get` / `Delete`).
+- `leader.isAlive()` returns `false`. That call is an RMI lookup for `Node-<id>` against the recorded IP and port (see `NodeAddress.isAlive()`); any `RemoteException` or `NotBoundException` is treated as dead.
+- A peer notices the leader is gone, removes it from its own `nodeAddresses`, calls `informOfNewNode()` to push the new view to everyone, and reruns the election.
+
+```mermaid
+flowchart TD
+    T[Election triggered]:::fail --> Init["leaderID = -1<br/>maxleader = null"]
+    Init --> Iter[For each node in nodeAddresses]:::acceptor
+    Iter --> Cmp{"Integer(node.id) > leaderID?"}
+    Cmp -- yes --> Upd["leaderID = Integer(node.id)<br/>maxleader = node"]:::leader
+    Cmp -- no --> Skip[skip]
+    Upd --> Cont{More nodes?}
+    Skip --> Cont
+    Cont -- yes --> Iter
+    Cont -- no --> Set["this.leader = maxleader"]:::leader
+    Set --> Resume([Resume transaction with new leader]):::client
+    classDef client fill:#bbdefb,stroke:#1976d2,color:#0d47a1
+    classDef leader fill:#ffd54f,stroke:#f57c00,color:#bf360c
+    classDef acceptor fill:#c8e6c9,stroke:#388e3c,color:#1b5e20
+    classDef fail fill:#ffcdd2,stroke:#c62828,color:#b71c1c
+```
+
+This keeps the implementation small but has a real consequence: a node that has not yet been informed of the latest membership change can briefly disagree about who the leader is, which is why the first thing the leader does on a new transaction is verify `leader.isAlive()` and rerun the election if it does not match.
 
 
 # Building
