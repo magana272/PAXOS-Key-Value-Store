@@ -5,49 +5,42 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class KeyValueStore {
 
+    public static final String MISSING_KEY_SENTINEL = "KEY does not exist";
+
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
     private final ReentrantReadWriteLock.ReadLock kvReadLock = lock.readLock();
-    private final ReentrantReadWriteLock.ReadLock kvWriteLock = lock.readLock();
-    protected HashMap<String, String> keyValue;
-
-    public KeyValueStore() {
-        this.keyValue = new HashMap<>();
-    }
+    private final ReentrantReadWriteLock.WriteLock kvWriteLock = lock.writeLock();
+    private final HashMap<String, String> keyValue = new HashMap<>();
 
     public boolean put(String key, String value) {
-        if (this.keyValue.containsKey(key)) {
-            return false;
-        } else {
-            kvWriteLock.lock();
-            this.keyValue.put(key, value);
-            kvWriteLock.unlock();
+        kvWriteLock.lock();
+        try {
+            if (keyValue.containsKey(key)) {
+                return false;
+            }
+            keyValue.put(key, value);
             return true;
+        } finally {
+            kvWriteLock.unlock();
         }
     }
 
     public String get(String key) {
-        if (this.keyValue.get(key) != null) {
-            kvReadLock.lock();
-            String res = this.keyValue.get(key);
+        kvReadLock.lock();
+        try {
+            String res = keyValue.get(key);
+            return res != null ? res : MISSING_KEY_SENTINEL;
+        } finally {
             kvReadLock.unlock();
-            return res;
-
-
-        } else {
-            System.out.println("KEY does not exist");
-            return "KEY does not exist";
         }
     }
 
     public boolean delete(String key) {
-        if (this.keyValue.containsKey(key)) {
-            kvWriteLock.lock();
-            this.keyValue.remove(key);
+        kvWriteLock.lock();
+        try {
+            return keyValue.remove(key) != null;
+        } finally {
             kvWriteLock.unlock();
-            return true;
-        } else {
-            return false;
         }
-
     }
 }

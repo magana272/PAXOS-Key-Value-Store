@@ -1,20 +1,17 @@
 package manuel.rpckvstore;
 
-import manuel.rpckvstore.BaseClient;
 import manuel.rpckvstore.Node.BaseServer;
 import manuel.rpckvstore.Packet.Packet;
-import manuel.rpckvstore.Node.Learner.KeyValue;
 import org.json.JSONException;
 
 import java.rmi.NotBoundException;
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
-import java.util.HashMap;
 import java.util.Scanner;
 
 
-public class Client extends Thread implements BaseClient {
+public class Client {
     private Registry cRegistry;
     private String HostNameorIPAddress;
     private int Portnumber;
