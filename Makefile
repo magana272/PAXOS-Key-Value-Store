@@ -28,7 +28,7 @@ help:
 	@echo "  run-node          - run joining node (ID=$(ID) PORT=$(PORT))"
 	@echo "  run-client        - run client against $(INIT_HOST):$(INIT_PORT)"
 	@echo "  run-cluster       - scripts/10Server.sh"
-	@echo "  test-leader-fail  - testBash/testLeaderFail.sh"
+	@echo "  test-leader-fail  - scripts/testLeaderFail.sh"
 	@echo "  kill-ports        - kill stale java/rmiregistry processes on 1099-1110"
 	@echo "  docker-build      - docker compose build"
 	@echo "  docker-up         - bring up CLUSTER_SIZE nodes (from .env)"
@@ -65,7 +65,7 @@ run-cluster:
 	bash scripts/10Server.sh
 
 test-leader-fail:
-	cd testBash && bash testLeaderFail.sh
+	bash scripts/testLeaderFail.sh
 
 kill-ports:
 	@for p in 1099 1100 1101 1102 1103 1104 1105 1106 1107 1108 1109 1110; do \
