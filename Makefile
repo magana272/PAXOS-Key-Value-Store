@@ -15,7 +15,8 @@ ACCEPT_FAIL  ?= 0.0
 PROPOSE_FAIL ?= 0.0
 
 .PHONY: all help build test cucumber clean run-init run-node run-client \
-        run-cluster test-leader-fail kill-ports
+        run-cluster test-leader-fail kill-ports \
+        docker-build docker-up docker-down docker-test docker-client docker-logs
 
 all: build
 
@@ -31,6 +32,12 @@ help:
 	@echo "  run-cluster       - testBash/10Server.sh"
 	@echo "  test-leader-fail  - testBash/testLeaderFail.sh"
 	@echo "  kill-ports        - kill stale java/rmiregistry processes on 1099-1110"
+	@echo "  docker-build      - docker compose build"
+	@echo "  docker-up         - bring up the 5-node dockerized cluster"
+	@echo "  docker-down       - tear down the dockerized cluster"
+	@echo "  docker-test       - scripts/dockertest.sh (PUT/GET round-trip)"
+	@echo "  docker-client     - scripts/client.sh (interactive REPL)"
+	@echo "  docker-logs       - docker compose logs -f"
 
 build:
 	$(MVN) -q clean package -DskipTests
@@ -67,3 +74,21 @@ kill-ports:
 		pid=$$(lsof -ti tcp:$$p 2>/dev/null); \
 		if [ -n "$$pid" ]; then echo "killing pid $$pid on $$p"; kill -9 $$pid; fi; \
 	done
+
+docker-build:
+	docker compose build
+
+docker-up: docker-build
+	docker compose up -d
+
+docker-down:
+	docker compose down -v --remove-orphans
+
+docker-test:
+	bash scripts/dockertest.sh
+
+docker-client:
+	bash scripts/client.sh
+
+docker-logs:
+	docker compose logs -f
