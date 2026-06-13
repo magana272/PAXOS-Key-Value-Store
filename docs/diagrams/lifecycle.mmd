@@ -1,0 +1,13 @@
+flowchart TD
+    Req([Client request]):::client --> Lookup["NodeAddress lookup"]:::acceptor
+    Lookup --> Alive{"leader.isAlive?"}
+    Alive -- no --> Elect["runLeaderElection (max-ID wins)"]:::fail
+    Elect --> Propose
+    Alive -- yes --> Propose["Leader.runProposalPhase<br/>(collect Vote majority)"]:::leader
+    Propose --> Accept["Leader.runAcceptPhase<br/>(collect Ack majority, ACCEPT_FAIL applied)"]:::leader
+    Accept --> Learn["Leader.runLearnPhase<br/>(KeyValueStore mutates, CommitStatus)"]:::leader
+    Learn --> Resp([TransactionPacket to client]):::client
+    classDef client fill:#bbdefb,stroke:#1976d2,color:#0d47a1
+    classDef leader fill:#ffd54f,stroke:#f57c00,color:#bf360c
+    classDef acceptor fill:#c8e6c9,stroke:#388e3c,color:#1b5e20
+    classDef fail fill:#ffcdd2,stroke:#c62828,color:#b71c1c

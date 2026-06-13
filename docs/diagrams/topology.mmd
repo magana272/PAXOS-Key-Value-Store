@@ -1,0 +1,28 @@
+flowchart TB
+    Env[".env"]:::cfg --> Gen["scripts/gen-compose.sh"]:::cfg --> Compose["docker-compose.yml"]:::cfg
+    Compose --> Net{{"Docker bridge network"}}:::net
+    Client["Client REPL"]:::client -->|RMI lookup Node-id| Net
+
+    subgraph Cluster["Paxos cluster (RMI mesh) -- 5 of N nodes shown"]
+        N0(("node0<br/>init")):::node
+        N1((node1)):::node
+        N2((node2)):::node
+        N3((node3)):::node
+        N4((node4)):::node
+        N0 --- N1
+        N0 --- N2
+        N0 --- N3
+        N0 --- N4
+        N1 --- N2
+        N1 --- N3
+        N1 --- N4
+        N2 --- N3
+        N2 --- N4
+        N3 --- N4
+    end
+    Net --> Cluster
+
+    classDef cfg fill:#fff3e0,stroke:#ef6c00,color:#bf360c
+    classDef net fill:#ede7f6,stroke:#5e35b1,color:#311b92
+    classDef node fill:#c8e6c9,stroke:#388e3c,color:#1b5e20
+    classDef client fill:#bbdefb,stroke:#1976d2,color:#0d47a1
