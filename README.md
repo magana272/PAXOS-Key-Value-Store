@@ -26,6 +26,14 @@ a strict requirement of the project.
 
 Every node in the cluster runs all three Paxos roles at once: it is a **Proposer**, an **Acceptor**, and a **Learner**. One node is elected **Leader** and is the only one that drives client transactions.
 
+## Protocol
+
+The leader runs three phases for every transaction. A strict majority of acceptors must respond at every phase for the value to be chosen, and the protocol retries the whole sequence with a fresh sequence number if any phase falls short.
+
+1. **Phase 1 - Propose (Prepare).** The leader picks a sequence number `n` larger than anything it has used and calls `Propose(n)` on every acceptor. An acceptor that has not promised a higher number records `n` as its new `PromisedSequenceNumber` and replies `Ack.YES`. An acceptor that has already promised a higher number replies `Ack.NO`.
+2. **Phase 2 - Accept.** Once the leader collects a majority of `YES` votes, it calls `Accept(n, v)` on every acceptor with the proposed value `v`. Acceptors whose promise still matches `n` reply with the accepted packet; stale proposals are returned with the response field set to `Ignored`. This is the phase wrapped in the simulated 10 percent failure on each acceptor, so the leader counts successful accepts against a majority threshold before continuing.
+3. **Phase 3 - Learn.** With a majority of accepts, the leader calls `Learn(v)` on every node, which dispatches the PUT / GET / DELETE through `KeyValueStore` and emits the response back to the client. If the leader did not get a majority of accepts the whole sequence is retried with a fresh `n`.
+
 ```mermaid
 flowchart LR
     C[Client] -->|PUT / GET / DELETE| L((Leader Proposer))
