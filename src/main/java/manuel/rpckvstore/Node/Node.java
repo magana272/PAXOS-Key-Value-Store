@@ -17,6 +17,7 @@ import manuel.rpckvstore.Packet.Vote;
 import java.io.Serializable;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.rmi.NotBoundException;
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
@@ -191,14 +192,9 @@ public class Node implements BaseServer, Serializable {
         System.out.println("Informing Coordinator");
         try {
             BaseServer stub = transport.lookup(leader);
-            if (stub == null) {
-                throw new RemoteException("Failed to retrieve the Coordinator stub.");
-            }
             return stub.hasTransaction(packet);
-        } catch (Exception e) {
-            System.err.println("Couldn't connect to server");
-            e.printStackTrace();
-            return null;
+        } catch (NotBoundException e) {
+            throw new RemoteException("Coordinator " + leader + " not bound in its registry", e);
         }
     }
 
