@@ -177,12 +177,13 @@ manuel.rpckvstore/
 
 ## Transaction Flow
 
-1. The client calls `Put` / `Get` / `Delete` on any node via RMI.
-2. The receiving node checks `leader.isAlive()` and, if needed, runs `runLeaderElection()` (max-ID wins) before forwarding the transaction to the leader.
-3. The leader runs Phase 1 (Propose) on all acceptors with a fresh `n`. A majority of `Ack.YES` is required to proceed.
-4. The leader runs Phase 2 (Accept) on all acceptors with `(n, v)`. Acceptors whose promise still matches `n` reply with the accepted packet; stale proposals come back marked `Ignored`. `ACCEPT_FAIL` is applied here.
-5. The leader runs Phase 3 (Learn) on every node, which dispatches the operation through `KeyValueStore` and returns the response to the client.
-6. If any phase falls short of a majority, the leader picks a larger `n` and retries from Phase 1.
+1. The client calls `Put` / `Get` / `Delete` on any node via RMI. `Node.routeThroughLeader()` is the entry point.
+2. The receiving node checks `leader.isAlive()`; if the leader is missing or dead, it drops the leader from `PeerDirectory`, calls `ClusterMembership.informOfNewNode()` to push the new view, and runs `LeaderElection.elect()` (max-ID wins).
+3. The node forwards a `TransactionPacket` to the leader via `BaseServer.hasTransaction()`.
+4. On the leader, `PaxosProposer.propose()` runs a round with a fresh proposal id (`sequenceNumber + "." + nodeId`). Phase 1 (Propose) collects votes from all peers via `RmiTransport`; a strict majority of `Ack.YES` is required.
+5. Phase 2 (Accept) is run in parallel using a per-round thread pool. Each peer's `PaxosAcceptor.accept()` either returns the packet marked `Ignored` (its promise has moved on), or -- with probability `1 - ACCEPT_FAIL` -- broadcasts `Learn` to every peer and applies the packet locally through `PaxosLearner`. Per-peer futures are bounded by `PaxosConfig.ACCEPT_PHASE_TIMEOUT_MS` (100 ms).
+6. `PaxosLearner.apply()` dispatches the packet through `KvTasks` against the in-memory `KeyValueStore` and returns the response.
+7. If the round falls short of a majority at any phase, `PaxosProposer` retries with a fresh sequence number up to `PaxosConfig.PROPOSER_MAX_ATTEMPTS` (10). After that, it throws `RemoteException`.
 
 ## Cluster Topology
 
