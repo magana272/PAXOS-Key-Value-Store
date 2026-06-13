@@ -342,8 +342,7 @@ Reponse Sent (2025-04-12 13:56:44.550):KEY Value Successfully Set
 # Run 10 Nodes
 
 ```shell
-cd testBash
-bash 10Server.sh
+bash scripts/10Server.sh
 ```
 
 Or:
@@ -415,7 +414,7 @@ Latest run on **dev** and **main**: `Tests run: 35, Failures: 0, Errors: 0, Skip
 | `make run-init` | starts the initial node on 127.0.0.1:1099 |
 | `make run-node ID=N PORT=P` | starts a joining node |
 | `make run-client` | runs the client against 127.0.0.1:1099 |
-| `make run-cluster` | shells out to testBash/10Server.sh |
+| `make run-cluster` | shells out to scripts/10Server.sh |
 | `make test-leader-fail` | shells out to testBash/testLeaderFail.sh |
 | `make kill-ports` | kills stale java/rmiregistry processes on 1099-1110 |
 | `make help` | prints the same list |
