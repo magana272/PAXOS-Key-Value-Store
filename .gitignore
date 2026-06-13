@@ -23,3 +23,6 @@ Thumbs.db
 # Logs
 *.log
 hs_err_pid*.log
+
+# Generated docker compose (rebuilt from .env by scripts/gen-compose.sh)
+docker-compose.yml

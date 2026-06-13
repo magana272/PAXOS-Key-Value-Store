@@ -204,19 +204,29 @@ make help
 
 # Docker
 
-The same cluster can run as five containers on a user-defined bridge network, one Paxos node per container, with no port collisions on the host. Image build is multi-stage (Maven build then JRE runtime), so a host Java/Maven install is not required to run the dockerized cluster.
+The same cluster can run as containers on a user-defined bridge network, one Paxos node per container, with no port collisions on the host. Image build is multi-stage (Maven build then JRE runtime), so a host Java/Maven install is not required to run the dockerized cluster.
+
+All knobs live in **`.env`** at the repo root - no values are hardcoded in the Makefile or scripts:
+
+```env
+CLUSTER_SIZE=5     # how many nodes to start (positive integer)
+ACCEPT_FAIL=0.0    # simulated acceptor failure rate per round
+PROPOSE_FAIL=0.0   # simulated proposer failure rate per round
+```
+
+`docker-compose.yml` itself is **generated** from `.env` by `scripts/gen-compose.sh` and is gitignored. `make docker-build` (and `make docker-test`) regenerates it whenever `.env` changes, so editing `CLUSTER_SIZE` is the only thing you need to do to scale up or down.
 
 ```shell
 make docker-build    # build the paxos-kvstore image
-make docker-up       # start node0..node4 on the paxos_net bridge
+make docker-up       # start CLUSTER_SIZE nodes on the paxos_net bridge
 make docker-client   # interactive REPL against the live cluster
 make docker-test     # canned PUT/GET round-trip
 make docker-down     # tear it all down
 ```
 
-The five services are `node0` (init) through `node4`. Joiners wait on `node0`'s TCP healthcheck on port 1099 via `depends_on: condition: service_healthy`, so they will not race the RMI registry bind. Container hostnames match service names, and `-Djava.rmi.server.hostname` is wired through `JAVA_TOOL_OPTIONS` so RMI stubs advertise reachable names.
+Each generated service is named `nodeN` and runs in its own container. `node0` is always the init. Joiners wait on `node0`'s TCP healthcheck on port 1099 via `depends_on: condition: service_healthy`, so they will not race the RMI registry bind. Container hostnames match service names, and `-Djava.rmi.server.hostname` is wired through `JAVA_TOOL_OPTIONS` so RMI stubs advertise reachable names.
 
-Simulated acceptor / proposer failure rates are read from `ACCEPT_FAIL` / `PROPOSE_FAIL` env vars (default `0.1`, matching the localhost flow). `docker-compose.yml` sets both to `0.0` for deterministic test runs; override per-service to demo failure recovery.
+`ACCEPT_FAIL` and `PROPOSE_FAIL` are passed into each container's environment via variable substitution. Default `0.0` for deterministic tests; bump to `0.1` to exercise the retry / leader-fail-over path. The same env vars are honored by the localhost `make run-init` / `run-node` flow with a `0.1` default to match the original behavior.
 
 Sample `make docker-client` session:
 
