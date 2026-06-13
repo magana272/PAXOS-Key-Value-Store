@@ -29,7 +29,7 @@ help:
 	@echo "  run-init          - run initial node on $(INIT_HOST):$(INIT_PORT)"
 	@echo "  run-node          - run joining node (ID=$(ID) PORT=$(PORT))"
 	@echo "  run-client        - run client against $(INIT_HOST):$(INIT_PORT)"
-	@echo "  run-cluster       - testBash/10Server.sh"
+	@echo "  run-cluster       - scripts/10Server.sh"
 	@echo "  test-leader-fail  - testBash/testLeaderFail.sh"
 	@echo "  kill-ports        - kill stale java/rmiregistry processes on 1099-1110"
 	@echo "  docker-build      - docker compose build"
@@ -64,7 +64,7 @@ run-client: $(JAR)
 	java -cp $(JAR) manuel.rpckvstore.Client $(INIT_HOST) $(INIT_PORT)
 
 run-cluster:
-	cd testBash && bash 10Server.sh
+	bash scripts/10Server.sh
 
 test-leader-fail:
 	cd testBash && bash testLeaderFail.sh
