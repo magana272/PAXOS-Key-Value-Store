@@ -34,5 +34,14 @@ metrics/
 __pycache__/
 *.pyc
 
+# Python virtualenv
+bin/
+lib/
+pyvenv.cfg
+
 # Generated docker compose (rebuilt from .env by scripts/gen-compose.sh)
 docker-compose.yml
+docker-compose.*.yml
+
+# Generated per-cluster charts (committed README charts are the top-level img/*.png)
+img/*/

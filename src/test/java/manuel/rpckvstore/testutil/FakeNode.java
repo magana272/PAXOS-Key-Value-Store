@@ -42,15 +42,15 @@ public class FakeNode implements BaseServer {
     }
 
     @Override
-    public Promise Propose(String key, float id) {
+    public Promise Propose(String key, float id) throws RemoteException {
         proposeCalls.incrementAndGet();
-        return acceptor.propose(key, id);
+        return acceptor.Propose(key, id);
     }
 
     @Override
-    public Packet Accept(float sequenceNumber, Packet packet) {
+    public Packet Accept(float sequenceNumber, Packet packet) throws RemoteException {
         acceptCalls.incrementAndGet();
-        return acceptor.accept(sequenceNumber, packet);
+        return acceptor.Accept(sequenceNumber, packet);
     }
 
     @Override

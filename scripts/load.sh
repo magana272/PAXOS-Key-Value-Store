@@ -16,25 +16,28 @@ cd "$(dirname "$0")/.."
 : "${LOAD_SWEEP:=1,2,4,8,16 }"
 : "${LOAD_OP:=PUT}"
 
-bash scripts/gen-compose.sh > docker-compose.yml
+CLUSTER_NAME="${CLUSTER_NAME:-load}"
+COMPOSE_FILE="docker-compose.${CLUSTER_NAME}.yml"
+CLUSTER_NAME="$CLUSTER_NAME" bash scripts/gen-compose.sh > "$COMPOSE_FILE"
 
-NET="${PAXOS_NET:-paxos-key-value-store_paxos_net}"
+NET="${PAXOS_NET:-${CLUSTER_NAME}_paxos_net}"
 IMAGE="${PAXOS_IMAGE:-paxos-kvstore:latest}"
+DC="docker compose -p $CLUSTER_NAME -f $COMPOSE_FILE"
 EXPECTED_JOINERS=$((CLUSTER_SIZE - 1))
 
 cleanup() {
-    docker compose down -v --remove-orphans >/dev/null 2>&1 || true
+    $DC down -v --remove-orphans >/dev/null 2>&1 || true
+    rm -f "$COMPOSE_FILE"
 }
 trap cleanup EXIT INT TERM
 
-echo "== Bringing up $CLUSTER_SIZE-node cluster (MSG_LOSS=0 for throughput) =="
-svcs=$(seq 0 $((CLUSTER_SIZE - 1)) | sed 's/^/node/' | tr '\n' ' ')
-MSG_LOSS=0.0 docker compose up -d --build $svcs
+echo "== Bringing up $CLUSTER_SIZE-node cluster '$CLUSTER_NAME' (MSG_LOSS=0 for throughput) =="
+MSG_LOSS=0.0 $DC up -d --build
 
 echo "== Waiting for cluster formation ($EXPECTED_JOINERS joiners) =="
 joined=0
 for _ in $(seq 1 60); do
-    joined=$(docker compose logs --no-color 2>/dev/null | grep -c "Successfully joined the network." || true)
+    joined=$($DC logs --no-color 2>/dev/null | grep -c "Successfully joined the network." || true)
     [ "$joined" -ge "$EXPECTED_JOINERS" ] && break
     sleep 1
 done

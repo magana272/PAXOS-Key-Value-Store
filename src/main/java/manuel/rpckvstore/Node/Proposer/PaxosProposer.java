@@ -1,10 +1,11 @@
 package manuel.rpckvstore.Node.Proposer;
 
-import manuel.rpckvstore.Node.BaseServer;
+import manuel.rpckvstore.Node.AcceptorRpc;
+import manuel.rpckvstore.Node.LearnerRpc;
 import manuel.rpckvstore.Node.PaxosConfig;
 import manuel.rpckvstore.Node.Response;
 import manuel.rpckvstore.Node.cluster.PeerDirectory;
-import manuel.rpckvstore.Node.cluster.RmiTransport;
+import manuel.rpckvstore.Node.cluster.Transport;
 import manuel.rpckvstore.NodeAddress;
 import manuel.rpckvstore.Logger.Logger;
 import manuel.rpckvstore.Packet.Packet;
@@ -26,16 +27,15 @@ public class PaxosProposer {
 
     private final String nodeId;
     private final PeerDirectory peers;
-    private final RmiTransport transport;
+    private final Transport transport;
 
-    
     private final ExecutorService roundExecutor = Executors.newCachedThreadPool();
     private final ConcurrentHashMap<String, Long> sequenceByKey = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Object> keyLocks = new ConcurrentHashMap<>();
 
     public PaxosProposer(String nodeId,
                          PeerDirectory peers,
-                         RmiTransport transport) {
+                         Transport transport) {
         this.nodeId = nodeId;
         this.peers = peers;
         this.transport = transport;
@@ -77,14 +77,31 @@ public class PaxosProposer {
     }
 
     private List<Promise> collectPromises(String key, float proposal) {
-        List<Promise> promises = new ArrayList<>();
+        List<Callable<Promise>> tasks = new ArrayList<>();
         for (NodeAddress peer : this.peers.snapshot()) {
-            try {
-                BaseServer stub = this.transport.lookupWithLoss(peer);
-                promises.add(stub.Propose(key, proposal));
-            } catch (Exception e) {
-                promises.add(Promise.rejected());
+            tasks.add(() -> {
+                try {
+                    AcceptorRpc stub = this.transport.lookupWithLoss(peer);
+                    return stub.Propose(key, proposal);
+                } catch (Exception e) {
+                    this.transport.invalidate(peer);
+                    return Promise.rejected();
+                }
+            });
+        }
+        List<Promise> promises = new ArrayList<>();
+        try {
+            List<Future<Promise>> futures = roundExecutor.invokeAll(
+                    tasks, PaxosConfig.PREPARE_PHASE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            for (Future<Promise> future : futures) {
+                try {
+                    promises.add(future.isCancelled() ? Promise.rejected() : future.get());
+                } catch (Exception e) {
+                    promises.add(Promise.rejected());
+                }
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
         return promises;
     }
@@ -107,9 +124,10 @@ public class PaxosProposer {
         for (NodeAddress peer : this.peers.snapshot()) {
             tasks.add(() -> {
                 try {
-                    BaseServer stub = transport.lookupWithLoss(peer);
+                    AcceptorRpc stub = transport.lookupWithLoss(peer);
                     return stub.Accept(proposal, payload);
                 } catch (Exception e) {
+                    transport.invalidate(peer);
                     return null;
                 }
             });
@@ -126,15 +144,13 @@ public class PaxosProposer {
                     Packet response = future.get();
                     if (response != null && "Accepted".equals(response.getResponse())) {
                         accepted++;
-                        if (accepted >=strictMajority){
+                        if (accepted >= strictMajority) {
                             commitChosenValue(payload);
-                            if (payload.getType() == TYPE.DELETE){
-                                return new Response("DELETE: "+ payload.getKey(), Logger.formatTime(System.currentTimeMillis()));
+                            if (payload.getType() == TYPE.DELETE) {
+                                return new Response("DELETE: " + payload.getKey(), Logger.formatTime(System.currentTimeMillis()));
+                            } else if (payload.getType() == TYPE.PUT) {
+                                return new Response("PUT: " + payload.getKey() + " " + Logger.formatTime(System.currentTimeMillis()), payload.getValue());
                             }
-                            else if(payload.getType() == TYPE.PUT){
-                                return new Response("PUT: "+ payload.getKey() + " " + Logger.formatTime(System.currentTimeMillis()),  payload.getValue());
-                            }
-                            
                         }
                     }
                 } catch (Exception e) {
@@ -144,19 +160,28 @@ public class PaxosProposer {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return null;
-        }        
+        }
         return null;
-
     }
 
     private void commitChosenValue(Packet chosen) {
+        List<Callable<Void>> tasks = new ArrayList<>();
         for (NodeAddress peer : this.peers.snapshot()) {
-            try {
-                BaseServer stub = transport.lookup(peer);
-                stub.Commit(chosen);
-            } catch (Exception e) {
-                Logger.error("Committing", e);
-            }
+            tasks.add(() -> {
+                try {
+                    LearnerRpc stub = transport.lookup(peer);
+                    stub.Commit(chosen);
+                } catch (Exception e) {
+                    transport.invalidate(peer);
+                    Logger.error("Committing", e);
+                }
+                return null;
+            });
+        }
+        try {
+            roundExecutor.invokeAll(tasks, PaxosConfig.COMMIT_PHASE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 }

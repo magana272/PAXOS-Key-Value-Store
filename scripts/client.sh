@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-NET="${PAXOS_NET:-paxos-key-value-store_paxos_net}"
+CLUSTER_NAME="${CLUSTER_NAME:-default}"
+NET="${PAXOS_NET:-${CLUSTER_NAME}_paxos_net}"
 HOST="${PAXOS_HOST:-node0}"
 PORT="${PAXOS_PORT:-1099}"
 IMAGE="${PAXOS_IMAGE:-paxos-kvstore:latest}"
 
 if ! docker network inspect "$NET" >/dev/null 2>&1; then
-    echo "Network '$NET' not found. Bring the cluster up first: make docker-up" >&2
+    echo "Network '$NET' not found. Bring the cluster up first: make up CLUSTER_NAME=$CLUSTER_NAME" >&2
     echo "Or set PAXOS_NET to the correct network name." >&2
     exit 1
 fi

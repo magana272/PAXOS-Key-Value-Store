@@ -5,7 +5,6 @@ import java.util.Date;
 
 import manuel.rpckvstore.Node.Response;
 import manuel.rpckvstore.Packet.Packet;
-import manuel.rpckvstore.Packet.TYPE;
 
 public final class Logger {
 

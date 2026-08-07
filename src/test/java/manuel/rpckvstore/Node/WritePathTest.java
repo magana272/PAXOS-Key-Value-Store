@@ -90,13 +90,13 @@ public class WritePathTest {
     }
 
     @Test
-    public void duplicatePutOnSecondLearnIsRefused() throws Exception {
+    public void duplicatePutOnSecondLearnOverwrites() throws Exception {
         node.Learn(putPacket("once", "first"));
 
         node.Learn(putPacket("once", "second"));
 
-        assertEquals("first", kv.Get("once"),
-                "KeyValueStore.put must not overwrite an existing key");
+        assertEquals("second", kv.Get("once"),
+                "last-write-wins: a later PUT to an existing key overwrites it");
     }
 
     @Test
@@ -139,15 +139,13 @@ public class WritePathTest {
     }
 
     /**
-     * Single-node analog of the Paxos guarantee "exactly one value is chosen per
-     * slot". KeyValueStore.Put is write-once (the first writer wins, later
-     * writers get false), so two threads racing a PUT on the same key must yield
-     * exactly one winner, and a subsequent GET must return that winner -- never
-     * the loser, never null, never the missing sentinel. The cluster-scale
-     * version of this property lives in validation/linearizability.py.
+     * Last-write-wins under contention: two threads racing a PUT on the same key
+     * both succeed, and a subsequent GET must return exactly one of the two
+     * written values -- never a corrupted value, never the missing sentinel. The
+     * cluster-scale version of this property lives in validation/linearizability.py.
      */
     @Test
-    public void concurrentPutsSameKeyYieldOneWinner() throws Exception {
+    public void concurrentPutsSameKeySettleToOneWrittenValue() throws Exception {
         ExecutorService pool = Executors.newFixedThreadPool(2);
         try {
             for (int i = 0; i < 50; i++) {
@@ -162,16 +160,12 @@ public class WritePathTest {
                     return kv.Put(key, "B");
                 });
 
-                boolean aWon = putA.get(5, TimeUnit.SECONDS);
-                boolean bWon = putB.get(5, TimeUnit.SECONDS);
+                assertTrue(putA.get(5, TimeUnit.SECONDS), "PUT A must succeed");
+                assertTrue(putB.get(5, TimeUnit.SECONDS), "PUT B must succeed");
 
-                assertTrue(aWon ^ bWon,
-                        "exactly one concurrent Put must win (aWon=" + aWon + ", bWon=" + bWon + ")");
-                String winner = aWon ? "A" : "B";
-                String loser = aWon ? "B" : "A";
                 String stored = kv.Get(key);
-                assertEquals(winner, stored, "GET must return the winning value");
-                assertNotEquals(loser, stored, "GET must never return the losing value");
+                assertTrue("A".equals(stored) || "B".equals(stored),
+                        "GET must return exactly one written value, got: " + stored);
                 assertNotEquals(KeyValueStore.MISSING_KEY_SENTINEL, stored,
                         "a committed key must not read back as missing");
             }

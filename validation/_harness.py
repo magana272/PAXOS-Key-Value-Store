@@ -118,31 +118,37 @@ class Config:
     repo_root: Path = REPO_ROOT
     port: int = 1099
     cluster_size: int = 5
+    cluster_name: str = "default"
     presets: dict = field(default_factory=lambda: {
         "clean": ("0.0", "0.0", "0.0"),
         "chaos": ("0.1", "0.1", "0.1"),
     })
 
+    @property
+    def compose_file(self) -> str:
+        return f"docker-compose.{self.cluster_name}.yml"
+
     @classmethod
-    def load(cls, repo_root=REPO_ROOT, cli_cluster_size=0) -> "Config":
+    def load(cls, repo_root=REPO_ROOT, cli_cluster_size=0, cluster_name="default") -> "Config":
         cfg = cls(
-            net=os.getenv("PAXOS_NET", "paxos-key-value-store_paxos_net"),
+            net=os.getenv("PAXOS_NET") or f"{cluster_name}_paxos_net",
             image=os.getenv("PAXOS_IMAGE", "paxos-kvstore:latest"),
             repo_root=repo_root,
+            cluster_name=cluster_name,
         )
         cfg.presets["chaos"] = (
             os.getenv("ACCEPT_FAIL", "0.0"),
             os.getenv("PROPOSE_FAIL", "0.0"),
             os.getenv("MSG_LOSS", "0.1"),
         )
-        cfg.cluster_size = cls._effective_cluster_size(repo_root, cli_cluster_size)
+        cfg.cluster_size = cls._effective_cluster_size(repo_root, cli_cluster_size, cfg.compose_file)
         return cfg
 
     @staticmethod
-    def _effective_cluster_size(repo_root, cli_value) -> int:
+    def _effective_cluster_size(repo_root, cli_value, compose_file="docker-compose.yml") -> int:
         if cli_value:
             return cli_value
-        compose = Path(repo_root) / "docker-compose.yml"
+        compose = Path(repo_root) / compose_file
         if compose.exists():
             ids = set(re.findall(r"^\s{2}(node\d+):", compose.read_text(), re.M))
             if ids:
@@ -196,13 +202,19 @@ class PaxosCluster:
         return subprocess.run(cmd, cwd=self.cfg.repo_root, capture_output=stdout is None,
                               stdout=stdout, text=True, timeout=timeout, check=check, env=env)
 
+    def _compose(self, *args):
+        return ["docker", "compose", "-p", self.cfg.cluster_name,
+                "-f", self.cfg.compose_file, *args]
+
     def ensure_compose_exists(self):
-        compose = Path(self.cfg.repo_root) / "docker-compose.yml"
+        compose = Path(self.cfg.repo_root) / self.cfg.compose_file
         if compose.exists():
             return
-        print("Generating docker-compose.yml...")
+        print(f"Generating {self.cfg.compose_file}...")
+        env = {**os.environ, "CLUSTER_NAME": self.cfg.cluster_name,
+               "CLUSTER_SIZE": str(self.cfg.cluster_size)}
         with compose.open("w") as f:
-            self._sh(["bash", "scripts/gen-compose.sh"], check=True, stdout=f)
+            self._sh(["bash", "scripts/gen-compose.sh"], check=True, stdout=f, env=env)
 
     def bring_up(self, preset):
         accept, propose, loss = self.cfg.presets[preset]
@@ -211,14 +223,14 @@ class PaxosCluster:
                "PROPOSE_FAIL": propose, "MSG_LOSS": loss}
         services = [f"node{i}" for i in range(self.cfg.cluster_size)]
         self.ensure_compose_exists()
-        self._sh(["docker", "compose", "up", "-d", "--build", *services],
+        self._sh(self._compose("up", "-d", "--build", *services),
                  timeout=900, check=True, env=env)
         self.wait_ready()
 
     def wait_ready(self, attempts=90):
         expected = self.cfg.cluster_size
         for _ in range(attempts):
-            logs = self._sh(["docker", "compose", "logs", "--no-color"]).stdout
+            logs = self._sh(self._compose("logs", "--no-color")).stdout
             if logs.count("Successfully joined the Paxos network!") >= expected:
                 print("Cluster Ready")
                 time.sleep(2)
@@ -228,15 +240,15 @@ class PaxosCluster:
 
     def stop_node(self, name):
         """Stop one node container (quorum_tolerance kill sweep)."""
-        self._sh(["docker", "compose", "stop", name], timeout=120)
+        self._sh(self._compose("stop", name), timeout=120)
 
     def start_node(self, name):
         """Restart a previously stopped node container."""
-        self._sh(["docker", "compose", "start", name], timeout=120)
+        self._sh(self._compose("start", name), timeout=120)
 
     def tear_down(self):
         print("===== Stopping cluster =====")
-        self._sh(["docker", "compose", "down", "-v", "--remove-orphans"], timeout=120)
+        self._sh(self._compose("down", "-v", "--remove-orphans"), timeout=120)
 
     def logs(self) -> str:
-        return self._sh(["docker", "compose", "logs", "--no-color"]).stdout
+        return self._sh(self._compose("logs", "--no-color")).stdout
