@@ -305,3 +305,25 @@ Tests are layered:
 make test    # mvn test -- JUnit + Cucumber
 make smoke   # docker-based end-to-end PUT / GET
 ```
+
+<!-- \newpage -->
+
+# 12. Amendments (Post-v1.0)
+
+*Sections 1-11 are the original v1.0 design of record and are left unchanged. This section records decisions that changed once the system met reality, in the spirit of an amendment log rather than a silent rewrite.*
+
+## 12.1 Known limitation: leader-local reads on failover
+
+**What v1.0 assumed.** Section 6 lists reads as "linearizable ... once a value is committed." The implementation later moved GETs off the consensus path entirely: a read is now answered by the elected leader directly from its own `KeyValueStore`, with no Paxos round -- a Multi-Paxos-style leader-read optimization.
+
+**Why it is safe while the leader is stable.** Every write funnels through the leader and is applied to the leader's own store during Phase 3 Commit before the client is acked, so the leader's copy reflects every write it has acknowledged. A GET routed to that same leader cannot miss one of its own writes, and in steady state the replica stores agree.
+
+**Where it breaks.** The guarantee holds only across a stable leader. On leader change three factors combine:
+
+1. Phase 3 Commit is best-effort -- `commitChosenValue` uses `invokeAll` bounded by `COMMIT_PHASE_TIMEOUT_MS` and swallows per-peer errors, so a slow or briefly-unreachable replica can miss a committed value (Commit itself is never dropped by `MSG_LOSS`, but it is time-bounded).
+2. After Commit, `advanceInstance` clears the acceptor's `acceptedValue`, so the only surviving record of a chosen value is the `KeyValueStore`s that received the Commit.
+3. Election performs no state transfer or log replay; a newly elected max-ID leader serves GETs straight from its own store.
+
+A new leader that missed a Commit can therefore serve a stale or missing read for a value that was genuinely chosen. Reads never consult the acceptor quorum, and the classic Paxos recovery (the new leader re-learning accepted values via Phase 1) is not implemented. The `quorum_tolerance` validator keeps the leader alive by construction (`node0` and the max-ID leader always survive), so it exercises acceptor-minority failure, not this failover path.
+
+**Remediation options** (not yet implemented), in rough order of effort: quorum reads (read a majority, take the newest, so no single leader's staleness matters); a leader lease plus read-index (serve local reads only while provably still leader); or retaining a learned log / not clearing acceptor state so a new leader can recover chosen-but-unapplied values on election.

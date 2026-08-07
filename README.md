@@ -1,6 +1,6 @@
 # PAXOS KEY-VALUE STORE
 
-A replicated key-value store backed by the Paxos consensus protocol. Every node runs all three Paxos roles (Proposer, Acceptor, Learner) over Java RMI. Consensus is **per key**: each key is its own independent single-decree instance, so writes to different keys commit in parallel while writes to the same key are linearized. **Writes** (PUT / DELETE) run the full three-phase protocol; **reads** (GET) are served directly from the leader's local store, since the leader holds the authoritative copy of every committed value. The cluster is containerized: one Paxos node per Docker container on a user-defined bridge network.
+A replicated key-value store backed by the Paxos consensus protocol. Every node runs all three Paxos roles (Proposer, Acceptor, Learner) over Java RMI. Consensus is **per key**: each key is its own independent single-decree instance, so writes to different keys commit in parallel while writes to the same key are linearized. **Writes** (PUT / DELETE) run the full three-phase protocol; **reads** (GET) are served directly from the leader's local store, since a stable leader drives every write and its copy stays current. This is a Multi-Paxos-style read optimization and is consistent only while the leader is stable -- see [Known limitation: reads on leader failover](#known-limitation-reads-on-leader-failover). The cluster is containerized: one Paxos node per Docker container on a user-defined bridge network.
 
 ![Cluster topology: .env to docker-compose to an RMI mesh of nodes](docs/diagrams/topology.png)
 
@@ -61,7 +61,7 @@ Skip this if you already know Paxos -- it is the mental model, not the code.
 
 **Multi-Paxos: stop paying for Phase 1.** Real systems decide a *stream* of values (a replicated log), not one. Running Prepare before every decision is wasteful. **Multi-Paxos** elects a stable leader once, runs Phase 1 a single time to own the ballot, then skips straight to Accept for every following value; Phase 1 only returns when the leader changes. That is how Paxos becomes a practical replicated log.
 
-**How this project maps to it.** Every node is proposer, acceptor, and learner at once, and one node is elected leader (max-ID wins) to drive writes -- the Multi-Paxos idea of a stable leader. Instead of one shared log, **each key is its own independent single-decree instance**, so writes to different keys never contend. Reads skip consensus entirely: the leader answers a GET from its own copy, since it drove every write and holds the authoritative value. The sections below are the same story with the real class names.
+**How this project maps to it.** Every node is proposer, acceptor, and learner at once, and one node is elected leader (max-ID wins) to drive writes -- the Multi-Paxos idea of a stable leader. Instead of one shared log, **each key is its own independent single-decree instance**, so writes to different keys never contend. Reads skip consensus entirely: the leader answers a GET from its own copy, since it drove every write and its copy stays current *while it remains the leader*. That last qualifier matters -- reads are only guaranteed consistent under a stable leader; see [Known limitation](#known-limitation-reads-on-leader-failover). The sections below are the same story with the real class names.
 
 ## Overview of Paxos
 
@@ -101,7 +101,7 @@ The net effect: concurrent clients writing distinct keys make progress in parall
 
 *The write path at a glance: a GET short-circuits to the leader's local store, while a PUT / DELETE runs Prepare -> Accept -> Commit and retries with a fresh ballot if a phase misses majority.*
 
-Reads and writes take different paths. A **GET** is answered by the leader directly from its own `KeyValueStore` (`Node.hasTransaction` short-circuits before Phase 1) -- the leader is the node that drives every write, so its store is the authoritative copy and no consensus round is needed to read. A **PUT / DELETE** is a decree: the leader runs three phases against a strict majority of acceptors, and retries the whole sequence with a fresh ballot (up to `PaxosConfig.PROPOSER_MAX_ATTEMPTS`, default 3) if any phase falls short. A ballot is `n = <perKeySequence>.<leaderId>`.
+Reads and writes take different paths. A **GET** is answered by the leader directly from its own `KeyValueStore` (`Node.hasTransaction` short-circuits before Phase 1) -- the leader drives every write and commits each chosen value to its own store before acking the client, so while it stays leader its copy is current and no consensus round is needed to read. This holds only under a stable leader (see [Known limitation: reads on leader failover](#known-limitation-reads-on-leader-failover)). A **PUT / DELETE** is a decree: the leader runs three phases against a strict majority of acceptors, and retries the whole sequence with a fresh ballot (up to `PaxosConfig.PROPOSER_MAX_ATTEMPTS`, default 3) if any phase falls short. A ballot is `n = <perKeySequence>.<leaderId>`.
 
 1. **Phase 1 - Prepare (Propose).** The leader calls `Propose(key, n)` on every acceptor. An acceptor that has not promised a higher ballot *for that key* records `n` and replies with a `Promise` (carrying any value it has already accepted for the key); otherwise it replies `Promise.rejected()`.
 2. **Phase 2 - Accept.** Once a majority promises, the leader selects the value -- re-proposing any already-accepted value tied to the highest ballot (`chooseAcceptedValue`, the Paxos safety rule) -- and calls `Accept(n, packet)` on every acceptor. Matching acceptors reply `Accepted`; stale ones return the packet marked `Ignored`. The accept fan-out is bounded by a timeout that cancels any straggler so no work leaks.
@@ -250,6 +250,20 @@ flowchart TD
 ```
 
 A node that has not yet been informed of the latest membership change can briefly disagree about who the leader is, which is why `Leader` verifies `isAlive()` and re-elects on each transaction if the current leader does not respond.
+
+### Known limitation: reads on leader failover
+
+Leader-local reads are consistent **only while the leader is stable**. This is a deliberate Multi-Paxos-style optimization -- because every write funnels through the leader and is applied to its own `KeyValueStore` during Phase 3 Commit before the client is acked, the leader's copy reflects everything it has acknowledged, so a GET routed to that same leader never misses one of its own writes. In steady state, replica stores agree and reads are linearizable.
+
+The gap is the moment the leader **changes**. Three things line up:
+
+1. Phase 3 Commit is **best-effort**: `commitChosenValue` runs `invokeAll` bounded by `PaxosConfig.COMMIT_PHASE_TIMEOUT_MS` and swallows per-peer errors, so a slow or briefly-unreachable replica can miss a committed value (Commit itself is never dropped by `MSG_LOSS`, but it is time-bounded).
+2. After Commit, the acceptor register is cleared (`advanceInstance` nulls `acceptedValue`), so the only surviving record of a chosen value is the `KeyValueStore`s that received the Commit.
+3. On election there is **no state transfer or log replay** -- a newly elected max-ID leader begins serving GETs straight from its own `KeyValueStore`.
+
+Together these mean a new leader that missed a Commit can serve a **stale or missing** read for a value that was genuinely chosen, because reads never consult the acceptor quorum and the accepted value has already been erased. Classic Paxos would recover this by having the new leader re-learn accepted values via Phase 1; this implementation does not. Note that the `quorum_tolerance` validator keeps the leader alive by construction (`node0` and the max-ID leader always survive), so it exercises acceptor-minority failure, not this failover path.
+
+Closing the gap would take one of: **quorum reads** (read a majority and take the newest, so no single leader's staleness matters), a **leader lease + read-index** (serve local reads only while provably still leader), or **retaining a learned log / not clearing acceptor state** so a new leader can recover chosen-but-unapplied values on election.
 
 ## Make Targets
 
