@@ -63,7 +63,7 @@ clean:
 	rm -rf metrics/
 	rm -rf ./img 
 	rm -rf ./logs
-validate:
+validate: clean 
 	bash scripts/validate.sh
  
 metrics:
@@ -71,9 +71,11 @@ metrics:
 
 # Correctness gate: one cluster, all four validators
 # (linearizability, missing_key, quorum_tolerance, retry_convergence).
-validate-paxos:
+validate-paxos: 
+	rm -rf ./logs
 	python3 -m validation
 
 # Performance (informational, not a gate): T1 sweep / T2 drift / T3 recovery.
-saturation:
+saturation: clean
+	rm -rf ./logs
 	python3 scripts/saturation.py --config chaos

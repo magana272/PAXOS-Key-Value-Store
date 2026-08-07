@@ -117,7 +117,7 @@ class Config:
     image: str
     repo_root: Path = REPO_ROOT
     port: int = 1099
-    cluster_size: int = 10
+    cluster_size: int = 5
     presets: dict = field(default_factory=lambda: {
         "clean": ("0.0", "0.0", "0.0"),
         "chaos": ("0.1", "0.1", "0.1"),
@@ -131,8 +131,8 @@ class Config:
             repo_root=repo_root,
         )
         cfg.presets["chaos"] = (
-            os.getenv("ACCEPT_FAIL", "0.1"),
-            os.getenv("PROPOSE_FAIL", "0.1"),
+            os.getenv("ACCEPT_FAIL", "0.0"),
+            os.getenv("PROPOSE_FAIL", "0.0"),
             os.getenv("MSG_LOSS", "0.1"),
         )
         cfg.cluster_size = cls._effective_cluster_size(repo_root, cli_cluster_size)

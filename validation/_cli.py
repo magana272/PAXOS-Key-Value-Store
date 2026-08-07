@@ -18,7 +18,7 @@ from ._harness import Config, PaxosClient, PaxosCluster
 def build_parser(description: str) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=description)
     p.add_argument("--config", choices=["clean", "chaos"], default="clean")
-    p.add_argument("--cluster-size", type=int, default=0)
+    p.add_argument("--cluster-size", type=int, default=5)
     p.add_argument("--keys", type=int, default=12)
     p.add_argument("--writers", type=int, default=6)
     p.add_argument("--reads", type=int, default=12)
