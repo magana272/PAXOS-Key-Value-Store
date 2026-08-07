@@ -41,6 +41,7 @@ cd "$(dirname "$0")/.."
 # these unconditionally), then re-apply them so an explicit `VAR=... bash
 # scripts/validate.sh` wins over the .env default.
 _CLUSTER_SIZE_OVERRIDE="${CLUSTER_SIZE:-}"
+_CLUSTER_NAME_OVERRIDE="${CLUSTER_NAME:-}"
 _TRIALS_OVERRIDE="${TRIALS:-}"
 _THROUGHPUT_REPEATS_OVERRIDE="${THROUGHPUT_REPEATS:-}"
 _MSG_LOSS_RATE_OVERRIDE="${MSG_LOSS_RATE:-}"
@@ -49,12 +50,15 @@ _MSG_LOSS_RATE_OVERRIDE="${MSG_LOSS_RATE:-}"
 . ./.env
 
 CLUSTER_SIZE="${_CLUSTER_SIZE_OVERRIDE:-${CLUSTER_SIZE:-10}}"
+CLUSTER_NAME="${_CLUSTER_NAME_OVERRIDE:-${CLUSTER_NAME:-validate}}"
 TRIALS="${_TRIALS_OVERRIDE:-${TRIALS:-5}}"
 THROUGHPUT_REPEATS="${_THROUGHPUT_REPEATS_OVERRIDE:-${THROUGHPUT_REPEATS:-10}}"
 MSG_LOSS_RATE="${_MSG_LOSS_RATE_OVERRIDE:-${MSG_LOSS:-0.1}}"
-NET="${PAXOS_NET:-paxos-key-value-store_paxos_net}"
+NET="${PAXOS_NET:-${CLUSTER_NAME}_paxos_net}"
 IMAGE="${PAXOS_IMAGE:-paxos-kvstore:latest}"
-METRICS_DIR="metrics"
+COMPOSE_FILE="docker-compose.${CLUSTER_NAME}.yml"
+DC="docker compose -p ${CLUSTER_NAME} -f ${COMPOSE_FILE}"
+METRICS_DIR="metrics/${CLUSTER_NAME}"
 VERIFY_SETTLE_SECS="${VERIFY_SETTLE_SECS:-12}"
 
 mkdir -p "$METRICS_DIR"
@@ -73,7 +77,7 @@ wait_for_cluster() {
     local expected_joiners=$((CLUSTER_SIZE - 1))
     local joined=0
     for _ in $(seq 1 60); do
-        joined=$(docker compose logs --no-color 2>/dev/null | grep -c "Successfully joined the network." || true)
+        joined=$($DC logs --no-color 2>/dev/null | grep -c "Successfully joined the network." || true)
         [ "$joined" -ge "$expected_joiners" ] && return 0
         sleep 1
     done
@@ -83,20 +87,19 @@ wait_for_cluster() {
 
 capture_retries() {
     local count
-    count=$(docker compose logs --no-color 2>/dev/null | grep -c "Retrying Paxos (attempt" || true)
+    count=$($DC logs --no-color 2>/dev/null | grep -c "Retrying Paxos (attempt" || true)
     echo "$count" > "$1"
 }
 
 bring_up() {
-    MSG_LOSS="$1" bash scripts/gen-compose.sh > docker-compose.yml
-    local svcs
-    svcs=$(seq 0 $((CLUSTER_SIZE - 1)) | sed 's/^/node/' | tr '\n' ' ')
-    MSG_LOSS="$1" docker compose up -d --build $svcs
+    CLUSTER_NAME="$CLUSTER_NAME" CLUSTER_SIZE="$CLUSTER_SIZE" MSG_LOSS="$1" \
+        bash scripts/gen-compose.sh > "$COMPOSE_FILE"
+    MSG_LOSS="$1" $DC up -d --build
     wait_for_cluster
 }
 
 tear_down() {
-    docker compose down -v --remove-orphans
+    $DC down -v --remove-orphans
 }
 
 for trial in $(seq 1 "$TRIALS"); do
@@ -119,7 +122,7 @@ for trial in $(seq 1 "$TRIALS"); do
     for failed in $(seq 1 $((CLUSTER_SIZE - 2))); do
         victim="node$((CLUSTER_SIZE - 1 - failed))"   # kill middle nodes N-2 .. 1
         echo "Stopping $victim (failed_count=$failed)"
-        docker compose stop "$victim" >/dev/null
+        $DC stop "$victim" >/dev/null
         sleep "$VERIFY_SETTLE_SECS"  # let Docker drop the stopped node's DNS so dead-peer lookups fail fast
         # sweep = PUT+GET+DELETE per key: the write path runs Paxos, so success
         # collapses when live nodes fall below majority. (A GET-only sweep would
@@ -145,4 +148,4 @@ for trial in $(seq 1 "$TRIALS"); do
     tear_down
 done
 
-echo "All trials complete. Metrics in $METRICS_DIR/. Now run: python3 scripts/generate_charts.py"
+echo "All trials complete. Metrics in $METRICS_DIR/. Now run: python3 scripts/generate_charts.py --metrics-dir $METRICS_DIR --img-dir img/$CLUSTER_NAME"

@@ -31,6 +31,7 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(description="Paxos correctness gate (all validators)")
     p.add_argument("--config", choices=["clean", "chaos"], default="clean")
     p.add_argument("--cluster-size", type=int, default=5)
+    p.add_argument("--cluster-name", default="validate-paxos")
     p.add_argument("--keys", type=int, default=12)
     p.add_argument("--writers", type=int, default=6)
     p.add_argument("--reads", type=int, default=12)
@@ -56,7 +57,7 @@ def _report(results, cluster_size, config) -> tuple[str, bool]:
 
 def main(argv=None) -> int:
     args = parse_args(argv)
-    cfg = Config.load(cli_cluster_size=args.cluster_size)
+    cfg = Config.load(cli_cluster_size=args.cluster_size, cluster_name=args.cluster_name)
     cluster = PaxosCluster(cfg)
     client = PaxosClient(cfg)
     manage = not args.no_manage_cluster
@@ -78,8 +79,8 @@ def main(argv=None) -> int:
         if manage and not args.keep_up:
             cluster.tear_down()
 
-    metrics_dir = Path(cfg.repo_root) / "metrics"
-    metrics_dir.mkdir(exist_ok=True)
+    metrics_dir = Path(cfg.repo_root) / "metrics" / cfg.cluster_name
+    metrics_dir.mkdir(parents=True, exist_ok=True)
     (metrics_dir / "validation_results.json").write_text(
         json.dumps({"config": args.config, "cluster_size": cfg.cluster_size,
                     "results": results}, indent=2, default=str))

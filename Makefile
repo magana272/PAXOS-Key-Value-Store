@@ -4,27 +4,41 @@
 #   1. The cluster runs in Docker. Knobs live in .env.
 #   2. The Java JAR is built inside the Docker image; `make build` is only
 #      needed if you want to run unit tests (`make test`) on the host.
+#
+# CLUSTER_NAME selects an isolated, named cluster: its own docker compose
+# project (-p), network (<name>_paxos_net), per-node volumes (logs/<name>/node#)
+# and per-run metrics/<name> + img/<name>. Pass CLUSTER_NAME=<name> (and
+# optionally CLUSTER_SIZE=<n>) to any cluster target; default is "default".
+# smoke/thread/load create and destroy their own throwaway cluster, so they use
+# their own names and never disturb a persistent cluster you brought up.
 
 MVN ?= mvn
 JAR := target/KVStore2PC.jar
 
-.PHONY: help build test up down client smoke thread load logs clean validate validate-paxos validate-paxos-easy validate-paxos-hard saturation metrics
+CLUSTER_NAME ?= default
+COMPOSE_FILE := docker-compose.$(CLUSTER_NAME).yml
+DC := docker compose -p $(CLUSTER_NAME) -f $(COMPOSE_FILE)
+GEN = CLUSTER_NAME=$(CLUSTER_NAME) $(if $(strip $(CLUSTER_SIZE)),CLUSTER_SIZE=$(CLUSTER_SIZE),) bash scripts/gen-compose.sh > $(COMPOSE_FILE)
+
+.PHONY: help build test up add-node down client smoke thread load logs clean clean-all validate validate-paxos saturation metrics all
 
 help:
-	@echo "Targets:"
-	@echo "  build   - mvn clean package -> $(JAR)"
-	@echo "  test    - mvn test (JUnit + Cucumber)"
-	@echo "  up      - bring up CLUSTER_SIZE-node docker cluster"
-	@echo "  down    - tear down the cluster"
-	@echo "  client  - interactive REPL against the live cluster"
-	@echo "  smoke   - PUT/GET round-trip assertion"
-	@echo "  thread  - concurrent client self-check"
+	@echo "Targets (pass CLUSTER_NAME=<name> CLUSTER_SIZE=<n> to scope a cluster):"
+	@echo "  build     - mvn clean package -> $(JAR)"
+	@echo "  test      - mvn test (JUnit + Cucumber)"
+	@echo "  up        - bring up a CLUSTER_SIZE-node cluster named CLUSTER_NAME"
+	@echo "  add-node  - add one node to cluster CLUSTER_NAME"
+	@echo "  down      - tear down cluster CLUSTER_NAME"
+	@echo "  client    - interactive REPL against cluster CLUSTER_NAME"
+	@echo "  smoke     - PUT/GET round-trip (own throwaway cluster)"
+	@echo "  thread    - concurrent client self-check (own throwaway cluster)"
 	@echo "  validate-paxos - correctness gate (python3 -m validation)"
 	@echo "  saturation     - performance harness (T1/T2/T3, informational)"
-	@echo "  validate       - fault-tolerance/latency matrix -> metrics/"
-	@echo "  metrics        - render figures from metrics/ (generate_charts.py)"
-	@echo "  logs    - follow docker compose logs"
-	@echo "  clean   - mvn clean + remove generated docker-compose.yml"
+	@echo "  validate       - fault-tolerance/latency matrix -> metrics/validate"
+	@echo "  metrics        - render figures from metrics/<CLUSTER_NAME>"
+	@echo "  logs      - follow cluster CLUSTER_NAME logs"
+	@echo "  clean     - remove cluster CLUSTER_NAME artifacts"
+	@echo "  clean-all - wipe all generated clusters/metrics/logs (keeps committed img/*.png)"
 
 build:
 	$(MVN) -q clean package -DskipTests
@@ -32,56 +46,75 @@ build:
 test:
 	$(MVN) -q test
 
-docker-compose.yml: .env scripts/gen-compose.sh
-	bash scripts/gen-compose.sh > docker-compose.yml
+up:
+	$(GEN)
+	$(DC) up -d --build
+	@echo "Cluster '$(CLUSTER_NAME)' is up on network $(CLUSTER_NAME)_paxos_net"
 
-up: docker-compose.yml
-	@. ./.env; \
-	svcs=$$(seq 0 $$((CLUSTER_SIZE - 1)) | sed 's/^/node/' | tr '\n' ' '); \
-	echo "Bringing up $$CLUSTER_SIZE nodes: $$svcs"; \
-	docker compose up -d --build $$svcs
+add-node:
+	@current=$$(grep -cE '^  node[0-9]+:' $(COMPOSE_FILE) 2>/dev/null || echo 0); \
+	if [ "$$current" -lt 1 ]; then \
+		echo "No cluster '$(CLUSTER_NAME)' found; run: make up CLUSTER_NAME=$(CLUSTER_NAME)" >&2; exit 1; \
+	fi; \
+	newsize=$$((current + 1)); \
+	echo "Adding node$$current to cluster '$(CLUSTER_NAME)' (size $$current -> $$newsize)"; \
+	CLUSTER_NAME=$(CLUSTER_NAME) CLUSTER_SIZE=$$newsize bash scripts/gen-compose.sh > $(COMPOSE_FILE); \
+	$(DC) up -d --build node$$current
 
 down:
-	docker compose down -v --remove-orphans
+	$(GEN)
+	$(DC) down -v --remove-orphans
 
-client: docker-compose.yml
-	bash scripts/client.sh
+client:
+	$(GEN)
+	CLUSTER_NAME=$(CLUSTER_NAME) PAXOS_NET=$(CLUSTER_NAME)_paxos_net bash scripts/client.sh
 
-thread: docker-compose.yml
-	bash scripts/threadedexample.sh
-load: docker-compose.yml
-	bash scripts/load.sh
-smoke: docker-compose.yml
+smoke:
 	bash scripts/dockertest.sh
 
+thread:
+	bash scripts/threadedexample.sh
+
+load:
+	bash scripts/load.sh
+
 logs:
-	docker compose logs -f
+	$(GEN)
+	$(DC) logs -f
 
 clean:
+	-$(DC) down -v --remove-orphans >/dev/null 2>&1 || true
+	rm -f $(COMPOSE_FILE)
+	rm -rf logs/$(CLUSTER_NAME) metrics/$(CLUSTER_NAME) img/$(CLUSTER_NAME)
+
+clean-all:
 	$(MVN) -q clean
-	rm -f docker-compose.yml
-	rm -rf metrics/
-	rm -rf ./img 
-	rm -rf ./logs
-validate: clean build up
-	bash scripts/validate.sh
-	python3 scripts/generate_charts.py	
+	rm -f docker-compose.*.yml docker-compose.yml
+	rm -rf metrics/ ./logs
+	find img -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} + 2>/dev/null || true
+
+# Fault-tolerance / latency matrix. Runs on its own "validate" cluster and writes
+# to metrics/validate + img/validate so it never clobbers other targets.
+validate:
+	CLUSTER_NAME=validate bash scripts/validate.sh
+	python3 scripts/generate_charts.py --metrics-dir metrics/validate --img-dir img/validate
 
 metrics:
-	python3 scripts/generate_charts.py	
+	python3 scripts/generate_charts.py --metrics-dir metrics/$(CLUSTER_NAME) --img-dir img/$(CLUSTER_NAME)
 
 # Correctness gate: one cluster, all four validators
 # (linearizability, missing_key, quorum_tolerance, retry_convergence).
-validate-paxos: 
-	python3 -m validation
+validate-paxos:
+	python3 -m validation --cluster-name validate-paxos
 
 # Performance (informational, not a gate): T1 sweep / T2 drift / T3 recovery.
 saturation:
-	rm -rf ./logs
-	python3 scripts/saturation.py --config chaos
-all: clean up
-	make metrics &
-	make validate-paxos &
-	make saturation
+	rm -rf logs/saturation
+	python3 scripts/saturation.py --cluster-name saturation --config chaos
 
-
+# Each gate runs on its own isolated cluster, so they no longer clobber each
+# other's logs/metrics; run them back to back.
+all:
+	$(MAKE) validate
+	$(MAKE) validate-paxos
+	$(MAKE) saturation

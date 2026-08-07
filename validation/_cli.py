@@ -19,6 +19,7 @@ def build_parser(description: str) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=description)
     p.add_argument("--config", choices=["clean", "chaos"], default="clean")
     p.add_argument("--cluster-size", type=int, default=5)
+    p.add_argument("--cluster-name", default="validate-paxos")
     p.add_argument("--keys", type=int, default=12)
     p.add_argument("--writers", type=int, default=6)
     p.add_argument("--reads", type=int, default=12)
@@ -37,7 +38,7 @@ def standalone(run, description: str, argv=None) -> int:
     Returns 0 if the verdict passed, 1 otherwise.
     """
     args = build_parser(description).parse_args(argv)
-    cfg = Config.load(cli_cluster_size=args.cluster_size)
+    cfg = Config.load(cli_cluster_size=args.cluster_size, cluster_name=args.cluster_name)
     cluster = PaxosCluster(cfg)
     client = PaxosClient(cfg)
     manage = not args.no_manage_cluster

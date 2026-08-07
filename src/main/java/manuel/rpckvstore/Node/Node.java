@@ -35,6 +35,7 @@ public class Node implements BaseServer, Serializable {
     private final String InitializeNodeIP;
     private final String InitializeNodePortNumber;
     private final int portNumber;
+    private final String clusterName;
     String ServerAddress;
 
     private final PeerDirectory peers;
@@ -64,7 +65,7 @@ public class Node implements BaseServer, Serializable {
                 float proposerFailRate,
                 double messageLossRate) throws RemoteException {
         this(NodeID, InitializeNodeIP, InitializeNodePortNumber, portNumber,
-                acceptorFailRate, proposerFailRate, messageLossRate, null);
+                acceptorFailRate, proposerFailRate, messageLossRate, null, envClusterName());
     }
     // Test seam: pins the leader-routing so the non-leader forward path can be
     // exercised without RMI. Production ctors funnel through here with null.
@@ -76,7 +77,22 @@ public class Node implements BaseServer, Serializable {
          float proposerFailRate,
          Leader leaderOverride) throws RemoteException {
         this(NodeID, InitializeNodeIP, InitializeNodePortNumber, portNumber,
-                acceptorFailRate, proposerFailRate, 0.0, leaderOverride);
+                acceptorFailRate, proposerFailRate, 0.0, leaderOverride, envClusterName());
+    }
+
+    public Node(String NodeID,
+                String InitializeNodeIP,
+                String InitializeNodePortNumber,
+                int portNumber,
+                float acceptorFailRate,
+                float proposerFailRate,
+                String clusterName) throws RemoteException {
+        this(NodeID, InitializeNodeIP, InitializeNodePortNumber, portNumber,
+                acceptorFailRate, proposerFailRate, 0.0, null, clusterName);
+    }
+
+    private static String envClusterName() {
+        return System.getenv().getOrDefault("CLUSTER_NAME", "default");
     }
 
     private Node(String NodeID,
@@ -86,11 +102,13 @@ public class Node implements BaseServer, Serializable {
                 float acceptorFailRate,
                 float proposerFailRate,
                 double messageLossRate,
-                Leader leaderOverride) throws RemoteException {
+                Leader leaderOverride,
+                String clusterName) throws RemoteException {
         this.NodeID = NodeID;
         this.InitializeNodeIP = InitializeNodeIP;
         this.InitializeNodePortNumber = InitializeNodePortNumber;
         this.portNumber = portNumber;
+        this.clusterName = clusterName;
         this.ServerAddress = "127.0.0.1";
 
         NodeAddress self = new NodeAddress(NodeID, InitializeNodeIP, InitializeNodePortNumber);
@@ -104,7 +122,7 @@ public class Node implements BaseServer, Serializable {
                 InitializeNodeIP, InitializeNodePortNumber, peers, transport);
         this.leader = (leaderOverride != null) ? leaderOverride : new Leader(peers, membership, learner.store());
         try{
-            String logDir = System.getenv().getOrDefault("LOG_DIR", "logs/" + this.NodeID);
+            String logDir = System.getenv().getOrDefault("LOG_DIR", "logs/" + this.clusterName + "/" + this.NodeID);
             File dir = new File(logDir);
             dir.mkdirs();
             this.Log = new BufferedWriter(new FileWriter(new File(dir, "log.txt")));
@@ -116,6 +134,10 @@ public class Node implements BaseServer, Serializable {
 
     public String getNodeID() {
         return NodeID;
+    }
+
+    public String getClusterName() {
+        return clusterName;
     }
 
     public String getServerAddress() {

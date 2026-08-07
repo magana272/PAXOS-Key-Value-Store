@@ -144,7 +144,7 @@ class SaturationSuite:
         return {"T1": t1, "T2": t2, "T3": t3}
 
 
-def figures(saturation, repo_root):
+def figures(saturation, repo_root, cluster_name="saturation"):
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -155,14 +155,14 @@ def figures(saturation, repo_root):
               file=sys.stderr)
         return
     sns.set_theme(style="whitegrid")
-    img_dir = Path(repo_root) / "img"
-    img_dir.mkdir(exist_ok=True)
+    img_dir = Path(repo_root) / "img" / cluster_name
+    img_dir.mkdir(parents=True, exist_ok=True)
 
     def save(fig, name):
         fig.tight_layout()
         fig.savefig(img_dir / name, dpi=150)
         plt.close(fig)
-        print(f"Wrote img/{name}")
+        print(f"Wrote {img_dir}/{name}")
 
     levels = pd.DataFrame(saturation["T1"]["levels"])
 
@@ -215,6 +215,7 @@ def parse_args(argv=None):
     p.add_argument("--repeats", type=int, default=6)
     p.add_argument("--drift-seconds", type=int, default=120)
     p.add_argument("--cluster-size", type=int, default=0)
+    p.add_argument("--cluster-name", default="saturation")
     p.add_argument("--no-manage-cluster", action="store_true")
     p.add_argument("--keep-up", action="store_true")
     p.add_argument("--no-figures", action="store_true")
@@ -225,7 +226,7 @@ def parse_args(argv=None):
 
 def main(argv=None) -> int:
     args = parse_args(argv)
-    cfg = Config.load(cli_cluster_size=args.cluster_size)
+    cfg = Config.load(cli_cluster_size=args.cluster_size, cluster_name=args.cluster_name)
     cluster = PaxosCluster(cfg)
     client = PaxosClient(cfg)
     manage = not args.no_manage_cluster
@@ -242,9 +243,9 @@ def main(argv=None) -> int:
             print(f"Using already-up cluster ({cfg.cluster_size} nodes assumed).")
         saturation = SaturationSuite(client, cfg.cluster_size).run(args, args.config)
     finally:
-        metrics_dir = Path(cfg.repo_root) / "metrics"
+        metrics_dir = Path(cfg.repo_root) / "metrics" / cfg.cluster_name
         if saturation is not None:
-            metrics_dir.mkdir(exist_ok=True)
+            metrics_dir.mkdir(parents=True, exist_ok=True)
             (metrics_dir / "saturation_results.json").write_text(
                 json.dumps({"config": args.config, "cluster_size": cfg.cluster_size,
                             "results": saturation}, indent=2, default=str))
@@ -252,7 +253,7 @@ def main(argv=None) -> int:
             cluster.tear_down()
 
     if saturation is not None and not args.no_figures:
-        figures(saturation, cfg.repo_root)
+        figures(saturation, cfg.repo_root, cfg.cluster_name)
     return 0
 
 
