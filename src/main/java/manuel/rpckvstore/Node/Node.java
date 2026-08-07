@@ -5,27 +5,29 @@ import manuel.rpckvstore.Node.Learner.KeyValueStore;
 import manuel.rpckvstore.Node.Learner.PaxosLearner;
 import manuel.rpckvstore.Node.Proposer.PaxosProposer;
 import manuel.rpckvstore.Node.cluster.ClusterMembership;
-import manuel.rpckvstore.Node.cluster.LeaderElection;
+import manuel.rpckvstore.Node.cluster.Leader;
 import manuel.rpckvstore.Node.cluster.PeerDirectory;
 import manuel.rpckvstore.Node.cluster.RmiTransport;
 import manuel.rpckvstore.NodeAddress;
-import manuel.rpckvstore.Packet.Ack;
+import manuel.rpckvstore.Logger.Logger;
+import manuel.rpckvstore.Packet.Promise;
+import manuel.rpckvstore.Packet.TYPE;
 import manuel.rpckvstore.Packet.Packet;
 import manuel.rpckvstore.Packet.TransactionPacket;
 import manuel.rpckvstore.Packet.Vote;
 
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.io.Serializable;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.rmi.NotBoundException;
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 import java.rmi.server.UnicastRemoteObject;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class Node implements BaseServer, Serializable {
 
@@ -35,16 +37,14 @@ public class Node implements BaseServer, Serializable {
     private final int portNumber;
     String ServerAddress;
 
-    private final ExecutorService executor;
-    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
-
     private final PeerDirectory peers;
     private final RmiTransport transport;
     private final PaxosLearner learner;
     private final PaxosAcceptor acceptor;
     private final PaxosProposer proposer;
     private final ClusterMembership membership;
-    private final LeaderElection election;
+    private final Leader leader;
+    private BufferedWriter Log;
 
     public Node(String NodeID,
                 String InitializeNodeIP,
@@ -52,29 +52,67 @@ public class Node implements BaseServer, Serializable {
                 int portNumber,
                 float acceptorFailRate,
                 float proposerFailRate) throws RemoteException {
+        this(NodeID, InitializeNodeIP, InitializeNodePortNumber, portNumber,
+                acceptorFailRate, proposerFailRate, 0.0);
+    }
+
+    public Node(String NodeID,
+                String InitializeNodeIP,
+                String InitializeNodePortNumber,
+                int portNumber,
+                float acceptorFailRate,
+                float proposerFailRate,
+                double messageLossRate) throws RemoteException {
+        this(NodeID, InitializeNodeIP, InitializeNodePortNumber, portNumber,
+                acceptorFailRate, proposerFailRate, messageLossRate, null);
+    }
+    // Test seam: pins the leader-routing so the non-leader forward path can be
+    // exercised without RMI. Production ctors funnel through here with null.
+    Node(String NodeID,
+         String InitializeNodeIP,
+         String InitializeNodePortNumber,
+         int portNumber,
+         float acceptorFailRate,
+         float proposerFailRate,
+         Leader leaderOverride) throws RemoteException {
+        this(NodeID, InitializeNodeIP, InitializeNodePortNumber, portNumber,
+                acceptorFailRate, proposerFailRate, 0.0, leaderOverride);
+    }
+
+    private Node(String NodeID,
+                String InitializeNodeIP,
+                String InitializeNodePortNumber,
+                int portNumber,
+                float acceptorFailRate,
+                float proposerFailRate,
+                double messageLossRate,
+                Leader leaderOverride) throws RemoteException {
         this.NodeID = NodeID;
         this.InitializeNodeIP = InitializeNodeIP;
         this.InitializeNodePortNumber = InitializeNodePortNumber;
         this.portNumber = portNumber;
         this.ServerAddress = "127.0.0.1";
 
-        int cores = Runtime.getRuntime().availableProcessors();
-        this.executor = Executors.newFixedThreadPool(cores);
-
         NodeAddress self = new NodeAddress(NodeID, InitializeNodeIP, InitializeNodePortNumber);
         this.peers = new PeerDirectory(self);
-        this.transport = new RmiTransport();
+        this.transport = new RmiTransport(messageLossRate);
 
-        PaxosConfig config = new PaxosConfig(acceptorFailRate, proposerFailRate);
-        this.learner = new PaxosLearner(new KeyValueStore(), executor);
-        this.acceptor = new PaxosAcceptor(config, executor, peers, transport, learner);
-        this.proposer = new PaxosProposer(NodeID, peers, transport, config);
+        this.learner = new PaxosLearner(new KeyValueStore());
+        this.acceptor = new PaxosAcceptor();
+        this.proposer = new PaxosProposer(NodeID, peers, transport);
         this.membership = new ClusterMembership(NodeID, () -> ServerAddress, portNumber,
                 InitializeNodeIP, InitializeNodePortNumber, peers, transport);
-        this.election = new LeaderElection(peers);
-    }
+        this.leader = (leaderOverride != null) ? leaderOverride : new Leader(peers, membership, learner.store());
+        try{
+            String logDir = System.getenv().getOrDefault("LOG_DIR", "logs/" + this.NodeID);
+            File dir = new File(logDir);
+            dir.mkdirs();
+            this.Log = new BufferedWriter(new FileWriter(new File(dir, "log.txt")));
+        }catch(IOException e){
+            Logger.error("Failed to open commit log", e);
+        }
 
-    // ===== Accessors used by tests / Client / main =====
+    }
 
     public String getNodeID() {
         return NodeID;
@@ -95,15 +133,7 @@ public class Node implements BaseServer, Serializable {
     public String getInitializeNodePortNumber() {
         return InitializeNodePortNumber;
     }
-
-    public ExecutorService getExecutor() {
-        return executor;
-    }
-
-    public ReentrantReadWriteLock getLock() {
-        return lock;
-    }
-
+    
     public Set<NodeAddress> getNodeAddresses() {
         return peers.view();
     }
@@ -112,20 +142,14 @@ public class Node implements BaseServer, Serializable {
         return learner.store();
     }
 
-    public String getPromisedSequenceNumber() {
-        Float promised = acceptor.promisedSequenceNumber();
+    public String getPromisedSequenceNumber(String key) {
+        Float promised = acceptor.promisedSequenceNumber(key);
         return promised == null ? null : String.valueOf((float) promised);
     }
 
-    public NodeAddress getLeader() {
-        return election.current();
-    }
-
-    // ===== BaseServer (RMI surface) =====
-
     @Override
-    public Ack Propose(float id) {
-        return acceptor.propose(id);
+    public Promise Propose(String key, float id) {
+        return acceptor.propose(key, id);
     }
 
     @Override
@@ -136,70 +160,44 @@ public class Node implements BaseServer, Serializable {
     @Override
     public void Learn(Packet packet) {
         System.out.println("========Learning===============");
-        learner.apply(packet);
+        leader.apply(packet);
     }
 
     @Override
-    public Packet Commit(Packet packet) {
-        System.out.println("========Committing===============");
-        return learner.apply(packet);
+    public Response Put(Packet p) throws RemoteException {
+        return submit(p);
     }
 
     @Override
-    public Packet Put(Packet p) throws RemoteException {
-        return routeThroughLeader(p);
+    public Response Get(Packet p) throws RemoteException {
+        // Reads are served by the leader, not this replica. The leader holds every
+        // majority-committed value (commit runs only after a strict-majority
+        // accept), so a leader read is consistent without a Paxos round -- and it
+        // closes the stale-read hole a local read leaves open when this replica
+        // missed a commit while it was down. read() serves it locally when this
+        // node is the leader (or standalone) and forwards to the elected leader
+        // otherwise. Response.body carries the raw value the harness hashes.
+        return leader.read(NodeID, p);
     }
 
     @Override
-    public Packet Get(Packet p) throws RemoteException {
-        return routeThroughLeader(p);
+    public Response Delete(Packet p) throws RemoteException {
+        return submit(p);
+    }
+
+    // Every client operation is a decree: wrap it and hand it to the leader,
+    // which runs (or forwards to) consensus for this key.
+    private Response submit(Packet p) throws RemoteException {
+        return leader.submit(new TransactionPacket(p, Vote.YES));
     }
 
     @Override
-    public Packet Delete(Packet p) throws RemoteException {
-        return routeThroughLeader(p);
-    }
-
-    private Packet routeThroughLeader(Packet p) throws RemoteException {
-        NodeAddress leader = election.current();
-        if (leader == null || !leader.isAlive()) {
-            if (leader != null) {
-                peers.remove(leader);
-                membership.informOfNewNode();
-            }
-            leader = election.elect();
-        }
-        p.logRecievedRequest();
-        TransactionPacket packet = new TransactionPacket(p, Vote.YES);
-        return informLeaderOfTransaction(packet, leader.getIp(), leader.getPort());
-    }
-
-    @Override
-    public Packet hasTransaction(TransactionPacket tranPacket) throws RemoteException {
+    public Response hasTransaction(TransactionPacket tranPacket) throws RemoteException {
         return proposer.propose(tranPacket);
     }
 
     @Override
-    public Packet informLeaderOfTransaction(TransactionPacket packet, String leaderIP, String leaderPort) throws RemoteException {
-        NodeAddress leader = election.current();
-        if (leader == null) {
-            leader = election.elect();
-        }
-        if (!leader.isAlive()) {
-            peers.remove(leader);
-            leader = election.elect();
-        }
-        System.out.println("Informing Coordinator");
-        try {
-            BaseServer stub = transport.lookup(leader);
-            return stub.hasTransaction(packet);
-        } catch (NotBoundException e) {
-            throw new RemoteException("Coordinator " + leader + " not bound in its registry", e);
-        }
-    }
-
-    @Override
-    public String join(String id, String ip, String port) {
+    public Response join(String id, String ip, String port) {
         return membership.join(id, ip, port);
     }
 
@@ -211,10 +209,6 @@ public class Node implements BaseServer, Serializable {
     @Override
     public boolean isAlive() {
         return true;
-    }
-
-    public void runLeaderElection() {
-        election.elect();
     }
 
     public void connectToInitalNode() throws RemoteException {
@@ -235,6 +229,38 @@ public class Node implements BaseServer, Serializable {
         }
     }
 
+    @Override
+    public Response Commit(Packet packet) throws RemoteException {
+        learner.apply(packet);
+        acceptor.advanceInstance(packet.getKey());
+        if (this.Log != null) {
+            try{
+                synchronized (this.Log) {
+                    this.Log.write(packet.getrequest().toString());
+                    this.Log.newLine();
+                    this.Log.flush();
+                }
+            }catch(IOException e){
+                Logger.error("Failed to write commit to log", e);
+            }
+        }
+        return null;
+
+    }
+     @Override
+    public boolean equals(Object obj) {
+        if (this == obj) {
+            return true;
+        }
+
+        if (obj == null || getClass() != obj.getClass()) {
+            return false;
+        }
+
+        NodeAddress other = (NodeAddress) obj;
+
+        return getNodeID() == other.getId();
+    }
     public static void main(String[] args) {
         if (args.length < 5) {
             System.err.println("Usage: java PaxosNode <nodeID> <myIP> <myPort> <initIP> <initPort> [--init]");
@@ -259,7 +285,8 @@ public class Node implements BaseServer, Serializable {
 
             float acceptFail = Float.parseFloat(System.getenv().getOrDefault("ACCEPT_FAIL", "0.1"));
             float proposeFail = Float.parseFloat(System.getenv().getOrDefault("PROPOSE_FAIL", "0.1"));
-            Node node = new Node(myID, initNode, initPort, port, acceptFail, proposeFail);
+            double msgLoss = Double.parseDouble(System.getenv().getOrDefault("MSG_LOSS", "0.0"));
+            Node node = new Node(myID, initNode, initPort, port, acceptFail, proposeFail, msgLoss);
             node.ServerAddress = myIP;
 
             BaseServer stub = (BaseServer) UnicastRemoteObject.exportObject(node, port);

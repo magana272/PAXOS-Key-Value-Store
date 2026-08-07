@@ -1,6 +1,7 @@
 package manuel.rpckvstore;
 
 import manuel.rpckvstore.Node.BaseServer;
+import manuel.rpckvstore.Node.Response;
 import manuel.rpckvstore.Packet.Packet;
 import org.json.JSONException;
 
@@ -9,6 +10,7 @@ import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 import java.util.Scanner;
+import manuel.rpckvstore.Logger.Logger;
 
 
 public class Client {
@@ -32,7 +34,15 @@ public class Client {
     public final BaseServer getStub() throws NotBoundException, RemoteException {
         System.out.println("Get stub");
         Registry r = this.getRegistry();
-        return (BaseServer) r.lookup("Node-"+0);
+        // Each node binds itself in its own registry as "Node-<id>", so the
+        // name is not always "Node-0". Discover whichever node this registry
+        // hosts so the client can connect to any node, not just node0.
+        for (String name : r.list()) {
+            if (name.startsWith("Node-")) {
+                return (BaseServer) r.lookup(name);
+            }
+        }
+        throw new NotBoundException("No Node-* bound in registry at " + this.HostNameorIPAddress);
     }
 
 
@@ -84,41 +94,45 @@ public class Client {
             while (true) {
                 if (userInput.hasNext()) {
                     String userText = userInput.nextLine();
+                    Response response;
                     Packet p;
 
                     try {
                         p = new Packet(userText);
                     } catch (JSONException e) {
-                        Packet.logMalformedRequest();
+                        Logger.logMalformedRequest();
                         continue;
                     }
                     switch (p.getType()) {
                         case GET:
                             try {
-                                p = stub.Get(p);
+                                response = stub.Get(p);
+                                Logger.log(response);
                             } catch (RemoteException e) {
                                 System.err.println("RemoteException while processing GET");
                                 e.printStackTrace();
                             }
-                            p.logResponseClient();
                             break;
                         case PUT:
                             try {
-                                p = stub.Put(p);
+                                response = stub.Put(p);
+                                Logger.log(response);
+
                             } catch (RemoteException e) {
                                 System.err.println("RemoteException while processing PUT");
                                 e.printStackTrace();
                             }
-                            p.logResponseClient();
+                            
                             break;
                         case DELETE:
                             try {
-                                p = stub.Delete(p);
+                                response = stub.Delete(p);
+                                Logger.log(response);
                             } catch (RemoteException e) {
                                 System.err.println("RemoteException while processing DELETE");
                                 e.printStackTrace();
                             }
-                            p.logResponseClient();
+                            
                             break;
                         default:
                             System.err.println("Type not recognized");

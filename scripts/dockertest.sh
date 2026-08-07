@@ -1,9 +1,7 @@
-#!/usr/bin/env bash
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# shellcheck disable=SC1091
 . ./.env
 
 bash scripts/gen-compose.sh > docker-compose.yml
@@ -21,17 +19,17 @@ echo "== Bringing up $CLUSTER_SIZE-node cluster =="
 svcs=$(seq 0 $((CLUSTER_SIZE - 1)) | sed 's/^/node/' | tr '\n' ' ')
 docker compose up -d --build $svcs
 
-echo "== Waiting for cluster formation ($EXPECTED_JOINERS joiners on node0) =="
+echo "== Waiting for cluster formation ($EXPECTED_JOINERS joiners) =="
 joined=0
 for _ in $(seq 1 60); do
-    joined=$(docker compose logs --no-color node0 2>/dev/null | grep -c "Node In Network" || true)
+    joined=$(docker compose logs --no-color 2>/dev/null | grep -c "Successfully joined the network." || true)
     [ "$joined" -ge "$EXPECTED_JOINERS" ] && break
     sleep 1
 done
 
 if [ "$joined" -lt "$EXPECTED_JOINERS" ]; then
     echo "FAIL: cluster did not form ($joined/$EXPECTED_JOINERS joiners)"
-    docker compose logs --no-color node0 || true
+    docker compose logs --no-color || true
     exit 1
 fi
 echo "Cluster formed with $joined joiners."
@@ -40,9 +38,6 @@ TEST_KEY="dockertest_$$"
 TEST_VAL="hello-from-dockertest"
 
 echo "== Running PUT/GET round-trip =="
-# Client.java loops on while(true) and never exits on stdin EOF, so we keep
-# stdin open with `sleep` to allow synchronous RMI responses to flush, then
-# kill the JVM with a timer.
 LOG=$(mktemp)
 {
     printf '{TYPE:PUT,KEY:%s,VALUE:%s}\n' "$TEST_KEY" "$TEST_VAL"
@@ -61,7 +56,7 @@ wait "$CLIENT_PID" 2>/dev/null || true
 out=$(cat "$LOG")
 rm -f "$LOG"
 
-if printf '%s\n' "$out" | grep -E "Recieved Response.*${TEST_VAL}" >/dev/null; then
+if printf '%s\n' "$out" | grep -E "${TEST_KEY}.*: ${TEST_VAL}" >/dev/null; then
     echo "PASS: PUT/GET round-trip works in dockerized cluster"
     exit 0
 else

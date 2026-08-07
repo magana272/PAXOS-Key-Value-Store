@@ -1,6 +1,7 @@
 package manuel.rpckvstore.Node.cluster;
 
 import manuel.rpckvstore.Node.BaseServer;
+import manuel.rpckvstore.Node.Response;
 import manuel.rpckvstore.NodeAddress;
 
 import java.rmi.NotBoundException;
@@ -36,14 +37,10 @@ public class ClusterMembership {
         this.transport = transport;
     }
 
-    public String join(String id, String ip, String port) {
+    public Response join(String id, String ip, String port) {
         peers.add(new NodeAddress(id, ip, port));
-        System.out.println("Node In Network");
-        for (NodeAddress n : peers.snapshot()) {
-            System.out.println(n.toString());
-        }
         informOfNewNode();
-        return "Joined";
+        return new Response("Joined", "ID:"+id +" :" +ip + " port:" +port +" Join ");
     }
 
     public void connectToInitialNode() throws RemoteException {
@@ -60,9 +57,8 @@ public class ClusterMembership {
         } catch (NotBoundException | RemoteException e) {
             throw new RuntimeException(e);
         }
-        String response = stub.join(selfId, selfIp.get(), String.valueOf(selfPort));
-        System.out.println("Response from initial node: " + response);
-        if (response.equals("Joined")) {
+        Response response = stub.join(selfId, selfIp.get(), String.valueOf(selfPort));
+        if (response!= null) {
             System.out.println("Successfully joined the network.");
         } else {
             System.out.println("Failed to join the network: " + response);

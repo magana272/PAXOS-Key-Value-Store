@@ -3,6 +3,7 @@ package manuel.rpckvstore.Packet;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 public class TransactionPacketTest {
 
@@ -22,5 +23,25 @@ public class TransactionPacketTest {
     @Test
     public void singleArgConstructorDefaultsToYes() throws Exception {
         assertEquals(Vote.YES, new TransactionPacket(anyPacket()).getVote());
+    }
+
+    @Test
+    public void gettersReturnConstructorPacket() throws Exception {
+        Packet packet = anyPacket();
+        TransactionPacket tp = new TransactionPacket(packet);
+
+        assertSame(packet, tp.getPacket());
+    }
+
+    @Test
+    public void settersReplacePacketAndVote() throws Exception {
+        TransactionPacket tp = new TransactionPacket(anyPacket());
+        Packet replacement = anyPacket();
+
+        tp.setPacket(replacement);
+        tp.setVote(Vote.NO);
+
+        assertSame(replacement, tp.getPacket());
+        assertEquals(Vote.NO, tp.getVote());
     }
 }

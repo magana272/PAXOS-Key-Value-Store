@@ -1,5 +1,6 @@
 package manuel.rpckvstore;
 
+import manuel.rpckvstore.Logger.Logger;
 import manuel.rpckvstore.Node.BaseServer;
 import manuel.rpckvstore.Packet.Packet;
 
@@ -82,28 +83,28 @@ public class Example {
         Packet deletePacket6 = new Packet(this.deletereq6);
         stub = this.getStub();
         try {
-            stub.Put(putPacket1).logResponseClient();
-            stub.Put(putPacket2).logResponseClient();
-            stub.Put(putPacket3).logResponseClient();
-            stub.Put(putPacket4).logResponseClient();
-            stub.Put(putPacket5).logResponseClient();
-            stub.Put(putPacket6).logResponseClient();
+            Logger.log(stub.Put(putPacket1));
+            Logger.log(stub.Put(putPacket2));
+            Logger.log(stub.Put(putPacket3));
+            Logger.log(stub.Put(putPacket4));
+            Logger.log(stub.Put(putPacket5));
+            Logger.log(stub.Put(putPacket6));
 
 
-            stub.Get(getPacket1).logResponseClient();
-            stub.Get(getPacket2).logResponseClient();
-            stub.Get(getPacket3).logResponseClient();
-            stub.Get(getPacket4).logResponseClient();
-            stub.Get(getPacket5).logResponseClient();
-            stub.Get(getPacket6).logResponseClient();
+            Logger.log(stub.Get(getPacket1));
+            Logger.log(stub.Get(getPacket2));
+            Logger.log(stub.Get(getPacket3));
+            Logger.log(stub.Get(getPacket4));
+            Logger.log(stub.Get(getPacket5));
+            Logger.log(stub.Get(getPacket6));
 
 
-            stub.Delete(deletePacket1).logResponseClient();
-            stub.Delete(deletePacket2).logResponseClient();
-            stub.Delete(deletePacket3).logResponseClient();
-            stub.Delete(deletePacket4).logResponseClient();
-            stub.Delete(deletePacket5).logResponseClient();
-            stub.Delete(deletePacket6).logResponseClient();
+            Logger.log(stub.Delete(deletePacket1));
+            Logger.log(stub.Delete(deletePacket2));
+            Logger.log(stub.Delete(deletePacket3));
+            Logger.log(stub.Delete(deletePacket4));
+            Logger.log(stub.Delete(deletePacket5));
+            Logger.log(stub.Delete(deletePacket6));
         } catch (RemoteException e) {
             System.err.println("The connection to the sever failed ");
             e.printStackTrace();

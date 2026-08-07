@@ -10,22 +10,22 @@ public class Packet implements Serializable {
 
     private String key;
     private String value;
-    private String req;
-    private TYPE reqType;
+    private String request;
+    private TYPE requestType;
     private String response;
 
     //  IF Packet is UDP
     private InetAddress address;
     private int port;
 
-    public Packet(String req) {
-        this.req = req;
-        parseReq(req);
+    public Packet(String request) {
+        this.request = request;
+        parserequest(request);
     }
 
-    public Packet(String req, InetAddress address, int port) {
-        this.req = req;
-        parseReq(req);
+    public Packet(String request, InetAddress address, int port) {
+        this.request = request;
+        parserequest(request);
         this.address = address;
         this.port = port;
     }
@@ -54,27 +54,27 @@ public class Packet implements Serializable {
         this.value = value;
     }
 
-    public String getReq() {
-        return req;
+    public String getrequest() {
+        return request;
     }
 
-    public void setReq(String req) {
-        this.req = req;
+    public void setrequest(String request) {
+        this.request = request;
     }
 
     public TYPE getType() {
-        return reqType;
+        return requestType;
     }
 
     public void setType(TYPE type) {
-        this.reqType = type;
+        this.requestType = type;
     }
 
-    public void parseReq(String req) throws JSONException {
+    public void parserequest(String request) throws JSONException {
         try {
-            JSONObject parser = new JSONObject(req);
-            this.reqType = TYPE.valueOf(String.valueOf(parser.get("TYPE")));
-            switch (reqType) {
+            JSONObject parser = new JSONObject(request);
+            this.requestType = TYPE.valueOf(String.valueOf(parser.get("TYPE")));
+            switch (requestType) {
                 case GET, DELETE -> this.key = String.valueOf(parser.get("KEY"));
                 case PUT -> {
                     this.key = String.valueOf(parser.get("KEY"));
@@ -82,7 +82,7 @@ public class Packet implements Serializable {
                 }
             }
         } catch (Exception e) {
-            throw new JSONException(req);
+            throw new JSONException(request);
         }
     }
 
@@ -92,21 +92,5 @@ public class Packet implements Serializable {
 
     public void setResponse(String response) {
         this.response = response;
-    }
-
-    public static void logMalformedRequest() {
-        PacketLogger.log("Malformed Request", "");
-    }
-
-    public void logRecievedRequest() {
-        PacketLogger.log("Recieved Request", req);
-    }
-
-    public void logResponseClient() {
-        PacketLogger.log("Recieved Response", response);
-    }
-
-    public void logResponseServer() {
-        PacketLogger.log("Reponse Sent", response);
     }
 }

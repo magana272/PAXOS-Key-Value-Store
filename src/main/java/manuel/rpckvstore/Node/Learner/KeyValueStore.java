@@ -1,6 +1,6 @@
 package manuel.rpckvstore.Node.Learner;
 
-import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class KeyValueStore {
@@ -10,35 +10,35 @@ public class KeyValueStore {
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
     private final ReentrantReadWriteLock.ReadLock kvReadLock = lock.readLock();
     private final ReentrantReadWriteLock.WriteLock kvWriteLock = lock.writeLock();
-    private final HashMap<String, String> keyValue = new HashMap<>();
+    private final ConcurrentHashMap<String, String> keyValueHashMap = new ConcurrentHashMap<>();
 
-    public boolean put(String key, String value) {
+    public Boolean Put(String key, String value) {
         kvWriteLock.lock();
         try {
-            if (keyValue.containsKey(key)) {
+            if (keyValueHashMap.containsKey(key)) {
                 return false;
             }
-            keyValue.put(key, value);
+            keyValueHashMap.put(key, value);
             return true;
         } finally {
             kvWriteLock.unlock();
         }
     }
 
-    public String get(String key) {
+    public String Get(String key) {
         kvReadLock.lock();
         try {
-            String res = keyValue.get(key);
+            String res = keyValueHashMap.get(key);
             return res != null ? res : MISSING_KEY_SENTINEL;
         } finally {
             kvReadLock.unlock();
         }
     }
 
-    public boolean delete(String key) {
+    public String Delete(String key) {
         kvWriteLock.lock();
         try {
-            return keyValue.remove(key) != null;
+            return keyValueHashMap.remove(key);
         } finally {
             kvWriteLock.unlock();
         }

@@ -1,31 +1,20 @@
 package manuel.rpckvstore.Node.Learner;
 
 import manuel.rpckvstore.Packet.Packet;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class PaxosLearnerTest {
 
-    private ExecutorService executor;
     private KeyValueStore kv;
     private PaxosLearner learner;
 
     @BeforeEach
     void setUp() {
-        executor = Executors.newSingleThreadExecutor();
         kv = new KeyValueStore();
-        learner = new PaxosLearner(kv, executor);
-    }
-
-    @AfterEach
-    void tearDown() {
-        executor.shutdownNow();
+        learner = new PaxosLearner(kv);
     }
 
     private static Packet put(String k, String v) {
@@ -44,7 +33,7 @@ public class PaxosLearnerTest {
     void applyPutWritesStore() {
         learner.apply(put("k", "v"));
 
-        assertEquals("v", kv.get("k"));
+        assertEquals("v", kv.Get("k"));
     }
 
     @Test
@@ -53,7 +42,7 @@ public class PaxosLearnerTest {
 
         learner.apply(get("k"));
 
-        assertEquals("v", kv.get("k"));
+        assertEquals("v", kv.Get("k"));
     }
 
     @Test
@@ -62,6 +51,6 @@ public class PaxosLearnerTest {
 
         learner.apply(del("k"));
 
-        assertEquals(KeyValueStore.MISSING_KEY_SENTINEL, kv.get("k"));
+        assertEquals(KeyValueStore.MISSING_KEY_SENTINEL, kv.Get("k"));
     }
 }

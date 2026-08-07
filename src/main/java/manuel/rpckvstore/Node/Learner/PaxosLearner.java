@@ -1,39 +1,37 @@
 package manuel.rpckvstore.Node.Learner;
 
+import manuel.rpckvstore.Logger.Logger;
+import manuel.rpckvstore.Node.Response;
 import manuel.rpckvstore.Packet.Packet;
-import manuel.rpckvstore.Packet.TYPE;
-
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
 
 public class PaxosLearner {
 
     private final KeyValueStore kv;
-    private final ExecutorService executor;
 
-    public PaxosLearner(KeyValueStore kv, ExecutorService executor) {
+    public PaxosLearner(KeyValueStore kv) {
         this.kv = kv;
-        this.executor = executor;
     }
 
     public KeyValueStore store() {
         return kv;
     }
 
-    public Packet apply(Packet packet) {
-        TYPE type = packet.getType();
-        Callable<Packet> task = switch (type) {
-            case GET -> KvTasks.get(kv, packet);
-            case PUT -> KvTasks.put(kv, packet);
-            case DELETE -> KvTasks.delete(kv, packet);
-        };
-        Future<Packet> future = executor.submit(task);
-        try {
-            return future.get();
-        } catch (InterruptedException | ExecutionException e) {
-            throw new RuntimeException(e);
+    public Response apply(Packet packet) {
+        Response response;
+        switch (packet.getType()) {
+            case PUT -> {
+                kv.Put(packet.getKey(), packet.getValue());
+                response = new Response("PUT " + packet.getKey(), "KEY Value Successfully Set");
+            }
+            // A GET carries no value on the packet; the value lives in the store.
+            case GET -> response = new Response("GET " + packet.getKey(), kv.Get(packet.getKey()));
+            case DELETE -> {
+                kv.Delete(packet.getKey());
+                response = new Response("DELETE " + packet.getKey(), "Key-Value Successfully Deleted");
+            }
+            default -> response = new Response(null, null);
         }
+        Logger.log(packet);
+        return response;
     }
 }

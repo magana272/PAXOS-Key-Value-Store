@@ -1,0 +1,125 @@
+package manuel.rpckvstore.Node.cluster;
+
+import manuel.rpckvstore.Node.BaseServer;
+import manuel.rpckvstore.Node.Response;
+import manuel.rpckvstore.Node.Learner.KeyValueStore;
+import manuel.rpckvstore.Node.Learner.PaxosLearner;
+import manuel.rpckvstore.Node.Proposer.ProposerInterface;
+import manuel.rpckvstore.NodeAddress;
+import manuel.rpckvstore.Packet.Packet;
+import manuel.rpckvstore.Packet.TransactionPacket;
+
+import java.rmi.RemoteException;
+import java.util.Set;
+
+
+public class Leader extends PaxosLearner implements ProposerInterface {
+
+    private final LeaderElection election;
+    private final ClusterMembership membership;
+    // When set, submit() forwards straight to this leader with no election.
+    // Only used by the leader-forward unit test; null on every production path.
+    private final BaseServer pinned;
+    // Cluster view, used by read() to decide "am I the leader / am I standalone"
+    // without forcing an election on the single-node path. Null on the pinned ctor.
+    private final PeerDirectory peers;
+
+    public Leader(PeerDirectory peers, ClusterMembership membership){
+        this(peers, membership, new KeyValueStore());
+    }
+
+    public Leader(PeerDirectory peers, ClusterMembership membership, KeyValueStore kv){
+        super(kv);
+        this.election = new LeaderElection(peers);
+        this.membership = membership;
+        this.pinned = null;
+        this.peers = peers;
+    }
+
+    private Leader(BaseServer pinned) {
+        super(new KeyValueStore());
+        this.election = null;
+        this.membership = null;
+        this.pinned = pinned;
+        this.peers = null;
+    }
+
+    public static Leader pinned(BaseServer leader) {
+        return new Leader(leader);
+    }
+
+    /** Forward a client transaction to the current leader, re-electing if it is gone. */
+    public Response submit(TransactionPacket packet) throws RemoteException {
+        if (pinned != null) {
+            return pinned.hasTransaction(packet);
+        }
+        return healthyLeader().hasTransaction(packet);
+    }
+
+    public Response read(String selfId, Packet packet) throws RemoteException {
+        if (pinned != null) {
+            return pinned.Get(packet);
+        }
+        BaseServer remoteLeader = leaderIfRemote(selfId);
+        if (remoteLeader == null) {
+            return apply(packet);
+        }
+        return remoteLeader.Get(packet);
+    }
+    private BaseServer leaderIfRemote(String selfId) throws RemoteException {
+        if (peers.size() <= 1) {
+            return null;
+        }
+        NodeAddress leaderAddr = election.getLeaderAddress();
+        if (leaderAddr == null || selfId.equals(leaderAddr.getId())) {
+            return null;
+        }
+        return healthyLeader();
+    }
+
+    public BaseServer current() {
+        return election.current();
+    }
+
+    public NodeAddress address() {
+        return election.getLeaderAddress();
+    }
+   
+
+    public void runElection() {
+        election.elect();
+    }
+    
+    private BaseServer healthyLeader() throws RemoteException {
+        BaseServer leader = election.current();
+        if (leader == null) {
+            leader = election.elect();
+        }
+        if (leader == null) {
+            throw new RemoteException("no leader could be elected");
+        }
+        if (!isAlive(leader)) {
+            election.demote();
+            membership.informOfNewNode();
+            leader = election.elect();
+            if (leader == null) {
+                throw new RemoteException("no leader after failover");
+            }
+        }
+        return leader;
+    }
+
+    private static boolean isAlive(BaseServer leader) {
+        try {
+            return leader.isAlive();
+        } catch (RemoteException e) {
+            return false;
+        }
+    }
+
+    @Override
+    public void inform(Set<NodeAddress> values) throws RemoteException {
+        membership.acceptUpdatedMembership(values);
+    }
+ 
+}

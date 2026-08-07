@@ -2,13 +2,17 @@ package manuel.rpckvstore;
 
 import manuel.rpckvstore.Node.BaseServer;
 
+import java.io.IOException;
 import java.io.Serializable;
-import java.rmi.AccessException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.rmi.NotBoundException;
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
 
 public class NodeAddress implements Serializable, Comparable<NodeAddress> {
+    private static final int PROBE_TIMEOUT_MS = 1000;
+
     private String id;
     private String ip;
     private int port;
@@ -51,21 +55,19 @@ public class NodeAddress implements Serializable, Comparable<NodeAddress> {
     }
 
     public boolean isAlive() {
-        BaseServer stub = null;
+        try (Socket probe = new Socket()) {
+            probe.connect(new InetSocketAddress(this.ip, this.port), PROBE_TIMEOUT_MS);
+        } catch (IOException e) {
+            return false;
+        }
+
         try {
-            stub = (BaseServer) LocateRegistry.getRegistry(this.getIp(),Integer.parseInt(this.getPort())).lookup("Node-"+this.getId());
+            BaseServer stub = (BaseServer) LocateRegistry
+                    .getRegistry(this.ip, this.port)
+                    .lookup("Node-" + this.getId());
+            return stub != null && stub.isAlive();
         } catch (NotBoundException | RemoteException e) {
             return false;
         }
-
-        try{
-            if (stub == null) {
-                return false;
-            }
-            return stub.isAlive();
-        } catch (RemoteException e) {
-            return false;
-        }
-
     }
 }
