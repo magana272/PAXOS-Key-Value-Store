@@ -13,6 +13,8 @@
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <cucumber.version>7.18.0</cucumber.version>
+        <test.included.groups></test.included.groups>
+        <test.excluded.groups>spec</test.excluded.groups>
     </properties>
 
     <dependencyManagement>
@@ -70,6 +72,30 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
+                <configuration>
+                    <groups>${test.included.groups}</groups>
+                    <excludedGroups>${test.excluded.groups}</excludedGroups>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>0.8.12</version>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -93,4 +119,33 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- `mvn test -Pspec` runs ONLY the spec tests (Paxos guarantees not yet
+             implemented). They are excluded from the normal build. -->
+        <profile>
+            <id>spec</id>
+            <properties>
+                <test.included.groups>spec</test.included.groups>
+                <test.excluded.groups></test.excluded.groups>
+            </properties>
+            <build>
+                <plugins>
+                    <!-- The spec profile runs only the spec-tagged unit specs. The
+                         Cucumber BDD suite has no spec-tagged scenarios, so under
+                         includedGroups=spec it discovers nothing and a JUnit Platform
+                         @Suite throws NoTestsDiscoveredException. Exclude it here. -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <excludes>
+                                <exclude>**/RunCucumberTest.java</exclude>
+                            </excludes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
