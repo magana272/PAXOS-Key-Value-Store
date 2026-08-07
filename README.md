@@ -2,6 +2,10 @@
 
 A replicated key-value store backed by the Paxos consensus protocol. Every node runs all three Paxos roles (Proposer, Acceptor, Learner) over Java RMI. Consensus is **per key**: each key is its own independent single-decree instance, so writes to different keys commit in parallel while writes to the same key are linearized. **Writes** (PUT / DELETE) run the full three-phase protocol; **reads** (GET) are served directly from the leader's local store, since the leader holds the authoritative copy of every committed value. The cluster is containerized: one Paxos node per Docker container on a user-defined bridge network.
 
+![Cluster topology: .env to docker-compose to an RMI mesh of nodes](docs/diagrams/topology.png)
+
+*`docker-compose.yml` is generated from `.env`; every node joins one bridge network and resolves peers by `Node-<id>` over the RMI mesh (5 of N nodes shown).*
+
 ## Quick Start
 
 ```shell
@@ -92,6 +96,10 @@ Rather than one global consensus register, **each key is an independent single-d
 The net effect: concurrent clients writing distinct keys make progress in parallel, and concurrent clients contending on one key are serialized into a single winner. This is asserted by the `@Tag("spec")` test `unrelatedKeysDoNotShareConsensusState` (run with `mvn test -Pspec`).
 
 ### Protocol
+
+![Transaction lifecycle: leader check, read short-circuit, three write phases, fresh-ballot retry](docs/diagrams/lifecycle.png)
+
+*The write path at a glance: a GET short-circuits to the leader's local store, while a PUT / DELETE runs Prepare -> Accept -> Commit and retries with a fresh ballot if a phase misses majority.*
 
 Reads and writes take different paths. A **GET** is answered by the leader directly from its own `KeyValueStore` (`Node.hasTransaction` short-circuits before Phase 1) -- the leader is the node that drives every write, so its store is the authoritative copy and no consensus round is needed to read. A **PUT / DELETE** is a decree: the leader runs three phases against a strict majority of acceptors, and retries the whole sequence with a fresh ballot (up to `PaxosConfig.PROPOSER_MAX_ATTEMPTS`, default 3) if any phase falls short. A ballot is `n = <perKeySequence>.<leaderId>`.
 
