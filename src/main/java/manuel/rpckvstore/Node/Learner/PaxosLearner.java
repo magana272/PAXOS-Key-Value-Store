@@ -3,34 +3,34 @@ package manuel.rpckvstore.Node.Learner;
 import manuel.rpckvstore.Logger.Logger;
 import manuel.rpckvstore.Node.Response;
 import manuel.rpckvstore.Packet.Packet;
+import manuel.rpckvstore.Packet.TYPE;
 
-public class PaxosLearner {
+import java.util.EnumMap;
+import java.util.Map;
+
+public class PaxosLearner extends AbstractLearner {
 
     private final KeyValueStore kv;
 
+    private final Map<TYPE, StoreOperation> operations = new EnumMap<>(TYPE.class);
+
     public PaxosLearner(KeyValueStore kv) {
         this.kv = kv;
+        operations.put(TYPE.PUT, new PutOperation());
+        operations.put(TYPE.GET, new GetOperation());
+        operations.put(TYPE.DELETE, new DeleteOperation());
     }
 
     public KeyValueStore store() {
         return kv;
     }
 
+    @Override
     public Response apply(Packet packet) {
-        Response response;
-        switch (packet.getType()) {
-            case PUT -> {
-                kv.Put(packet.getKey(), packet.getValue());
-                response = new Response("PUT " + packet.getKey(), "KEY Value Successfully Set");
-            }
-            // A GET carries no value on the packet; the value lives in the store.
-            case GET -> response = new Response("GET " + packet.getKey(), kv.Get(packet.getKey()));
-            case DELETE -> {
-                kv.Delete(packet.getKey());
-                response = new Response("DELETE " + packet.getKey(), "Key-Value Successfully Deleted");
-            }
-            default -> response = new Response(null, null);
-        }
+        StoreOperation operation = operations.get(packet.getType());
+        Response response = (operation != null)
+                ? operation.apply(kv, packet)
+                : new Response(null, null);
         Logger.log(packet);
         return response;
     }

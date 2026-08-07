@@ -53,9 +53,9 @@ public class KVStoreSteps {
         assertEquals(expected, kv.Get(key));
     }
 
-    @Then("the put result is false")
-    public void thePutResultIsFalse() {
-        assertFalse(lastPutResult);
+    @Then("the put result is true")
+    public void thePutResultIsTrue() {
+        assertTrue(lastPutResult);
     }
 
     @Then("the delete result is true")

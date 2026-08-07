@@ -1,6 +1,5 @@
 package manuel.rpckvstore.Node.cluster;
 
-import manuel.rpckvstore.Node.BaseServer;
 import manuel.rpckvstore.Node.Response;
 import manuel.rpckvstore.Node.Learner.KeyValueStore;
 import manuel.rpckvstore.NodeAddress;

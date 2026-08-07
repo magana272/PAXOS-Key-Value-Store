@@ -1,22 +1,30 @@
 package manuel.rpckvstore.Node.cluster;
 
 import manuel.rpckvstore.Node.BaseServer;
+import manuel.rpckvstore.Node.PaxosConfig;
 import manuel.rpckvstore.Node.Response;
 import manuel.rpckvstore.Node.Learner.KeyValueStore;
 import manuel.rpckvstore.Node.Learner.PaxosLearner;
-import manuel.rpckvstore.Node.Proposer.ProposerInterface;
 import manuel.rpckvstore.NodeAddress;
 import manuel.rpckvstore.Packet.Packet;
 import manuel.rpckvstore.Packet.TransactionPacket;
 
 import java.rmi.RemoteException;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 
-public class Leader extends PaxosLearner implements ProposerInterface {
+public class Leader extends PaxosLearner{
 
     private final LeaderElection election;
     private final ClusterMembership membership;
+    // Liveness probes run off the forward path so a wedged leader times out
+    // instead of blocking the caller.
+    private final ExecutorService healthExecutor = Executors.newCachedThreadPool();
     // When set, submit() forwards straight to this leader with no election.
     // Only used by the leader-forward unit test; null on every production path.
     private final BaseServer pinned;
@@ -29,8 +37,12 @@ public class Leader extends PaxosLearner implements ProposerInterface {
     }
 
     public Leader(PeerDirectory peers, ClusterMembership membership, KeyValueStore kv){
+        this(peers, membership, kv, new RmiTransport());
+    }
+
+    public Leader(PeerDirectory peers, ClusterMembership membership, KeyValueStore kv, Transport transport){
         super(kv);
-        this.election = new LeaderElection(peers);
+        this.election = new LeaderElection(peers, transport);
         this.membership = membership;
         this.pinned = null;
         this.peers = peers;
@@ -109,15 +121,24 @@ public class Leader extends PaxosLearner implements ProposerInterface {
         return leader;
     }
 
-    private static boolean isAlive(BaseServer leader) {
+    private boolean isAlive(BaseServer leader) {
+        Future<Boolean> probe = healthExecutor.submit(() -> {
+            try {
+                return leader.isAlive();
+            } catch (RemoteException e) {
+                return false;
+            }
+        });
         try {
-            return leader.isAlive();
-        } catch (RemoteException e) {
+            return probe.get(PaxosConfig.HEALTH_CHECK_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            probe.cancel(true);
+            return false;
+        } catch (Exception e) {
             return false;
         }
     }
 
-    @Override
     public void inform(Set<NodeAddress> values) throws RemoteException {
         membership.acceptUpdatedMembership(values);
     }

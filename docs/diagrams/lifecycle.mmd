@@ -6,7 +6,7 @@ flowchart TD
     Alive -- yes --> Forward["Forward TransactionPacket to leader (hasTransaction)"]:::leader
     Forward --> Propose["PaxosProposer: Phase 1 Propose<br/>(collect Ack majority via RmiTransport)"]:::leader
     Propose --> Accept["PaxosProposer: Phase 2 Accept<br/>(strict majority, ACCEPT_FAIL applied)"]:::leader
-    Accept --> Apply["PaxosAcceptor.accept broadcasts Learn,<br/>PaxosLearner.apply mutates KeyValueStore"]:::leader
+    Accept --> Apply["Paxosacceptor.Accept broadcasts Learn,<br/>PaxosLearner.apply mutates KeyValueStore"]:::leader
     Apply --> Resp([Packet response to client]):::client
     classDef client fill:#bbdefb,stroke:#1976d2,color:#0d47a1
     classDef leader fill:#ffd54f,stroke:#f57c00,color:#bf360c
