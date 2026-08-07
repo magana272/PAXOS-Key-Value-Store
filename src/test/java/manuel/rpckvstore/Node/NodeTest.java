@@ -52,13 +52,13 @@ public class NodeTest {
     }
 
     @Test
-    public void PutDuplicateKeyReturnsFalse() throws Exception {
+    public void PutExistingKeyOverwrites() throws Exception {
         KeyValueStore kv = newNode().getKv();
         kv.Put("dup", "first");
 
-        assertFalse(kv.Put("dup", "second"),
-                "Put on existing key should refuse to overwrite");
-        assertEquals("first", kv.Get("dup"));
+        assertTrue(kv.Put("dup", "second"),
+                "Put on existing key overwrites (last-write-wins)");
+        assertEquals("second", kv.Get("dup"));
     }
 
     @Test

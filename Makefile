@@ -15,12 +15,18 @@
 MVN ?= mvn
 JAR := target/KVStore2PC.jar
 
+ANALYSIS_IMAGE ?= paxos-analysis:latest
+PYRUN ?= docker run --rm \
+	-v $(CURDIR):$(CURDIR) -w $(CURDIR) \
+	-v /var/run/docker.sock:/var/run/docker.sock \
+	-e HOME=/tmp $(ANALYSIS_IMAGE)
+
 CLUSTER_NAME ?= default
 COMPOSE_FILE := docker-compose.$(CLUSTER_NAME).yml
 DC := docker compose -p $(CLUSTER_NAME) -f $(COMPOSE_FILE)
 GEN = CLUSTER_NAME=$(CLUSTER_NAME) $(if $(strip $(CLUSTER_SIZE)),CLUSTER_SIZE=$(CLUSTER_SIZE),) bash scripts/gen-compose.sh > $(COMPOSE_FILE)
 
-.PHONY: help build test up add-node down client smoke thread load logs clean clean-all validate validate-paxos saturation metrics all
+.PHONY: help build test up add-node down client smoke thread load logs clean clean-all validate validate-paxos saturation metrics all analysis-image
 
 help:
 	@echo "Targets (pass CLUSTER_NAME=<name> CLUSTER_SIZE=<n> to scope a cluster):"
@@ -39,6 +45,10 @@ help:
 	@echo "  logs      - follow cluster CLUSTER_NAME logs"
 	@echo "  clean     - remove cluster CLUSTER_NAME artifacts"
 	@echo "  clean-all - wipe all generated clusters/metrics/logs (keeps committed img/*.png)"
+	@echo "  analysis-image - build the Python analysis/orchestration image"
+
+analysis-image:
+	docker build -f Dockerfile.analysis -t $(ANALYSIS_IMAGE) .
 
 build:
 	$(MVN) -q clean package -DskipTests
@@ -95,22 +105,22 @@ clean-all:
 
 # Fault-tolerance / latency matrix. Runs on its own "validate" cluster and writes
 # to metrics/validate + img/validate so it never clobbers other targets.
-validate:
+validate: analysis-image
 	CLUSTER_NAME=validate bash scripts/validate.sh
-	python3 scripts/generate_charts.py --metrics-dir metrics/validate --img-dir img/validate
+	$(PYRUN) python3 scripts/generate_charts.py --metrics-dir metrics/validate --img-dir img/validate
 
-metrics:
-	python3 scripts/generate_charts.py --metrics-dir metrics/$(CLUSTER_NAME) --img-dir img/$(CLUSTER_NAME)
+metrics: analysis-image
+	$(PYRUN) python3 scripts/generate_charts.py --metrics-dir metrics/$(CLUSTER_NAME) --img-dir img/$(CLUSTER_NAME)
 
 # Correctness gate: one cluster, all four validators
 # (linearizability, missing_key, quorum_tolerance, retry_convergence).
-validate-paxos:
-	python3 -m validation --cluster-name validate-paxos
+validate-paxos: analysis-image
+	$(PYRUN) python3 -m validation --cluster-name validate-paxos
 
 # Performance (informational, not a gate): T1 sweep / T2 drift / T3 recovery.
-saturation:
+saturation: analysis-image
 	rm -rf logs/saturation
-	python3 scripts/saturation.py --cluster-name saturation --config chaos
+	$(PYRUN) python3 scripts/saturation.py --cluster-name saturation --config chaos
 
 # Each gate runs on its own isolated cluster, so they no longer clobber each
 # other's logs/metrics; run them back to back.

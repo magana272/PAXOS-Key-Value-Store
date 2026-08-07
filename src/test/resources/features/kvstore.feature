@@ -13,11 +13,11 @@ Feature: PAXOS Key-Value Store data semantics
   Scenario: getting a missing key returns the sentinel
     Then getting "ghost" returns "KEY does not exist"
 
-  Scenario: putting an existing key is rejected
+  Scenario: putting an existing key overwrites it
     Given "beta" is already set to "first"
     When I put "beta" with value "second"
-    Then the put result is false
-    And getting "beta" returns "first"
+    Then the put result is true
+    And getting "beta" returns "second"
 
   Scenario: deleting a key makes it no longer readable
     Given "gamma" is already set to "g"

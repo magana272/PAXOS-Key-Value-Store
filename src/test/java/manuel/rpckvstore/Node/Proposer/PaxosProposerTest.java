@@ -7,6 +7,7 @@ import manuel.rpckvstore.Packet.Promise;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+import java.rmi.RemoteException;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -69,18 +70,19 @@ class PaxosProposerTest {
      * Propose arrives before Commit/advanceInstance clears the slot. The acceptor must
      * report A in its Promise, the next proposer (carrying its own value B) must adopt A,
      * and applying the chosen value stores A -- the earlier write is never lost.
+ * @throws RemoteException 
      */
     @Test
     @Tag("spec")
-    void proposeBeforeCommitCarriesAcceptedValueForward() {
+    void proposeBeforeCommitCarriesAcceptedValueForward() throws RemoteException {
         PaxosAcceptor acceptor = new PaxosAcceptor();
 
         // Value A is accepted but Commit has not run yet (no advanceInstance).
-        acceptor.propose("k", 1.0f);
-        acceptor.accept(1.0f, put("k", "A"));
+        acceptor.Propose("k", 1.0f);
+        acceptor.Accept(1.0f, put("k", "A"));
 
         // A higher Propose arrives before Commit -- it must report A.
-        Promise p = acceptor.propose("k", 2.0f);
+        Promise p = acceptor.Propose("k", 2.0f);
         assertTrue(p.isPromised());
         assertTrue(p.hasAcceptedValue(),
                 "a Propose before Commit must report the in-flight accepted value");

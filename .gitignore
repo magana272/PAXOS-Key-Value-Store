@@ -34,6 +34,11 @@ metrics/
 __pycache__/
 *.pyc
 
+# Python virtualenv
+bin/
+lib/
+pyvenv.cfg
+
 # Generated docker compose (rebuilt from .env by scripts/gen-compose.sh)
 docker-compose.yml
 docker-compose.*.yml

@@ -9,6 +9,7 @@ import manuel.rpckvstore.Node.Proposer.PaxosProposer;
 import manuel.rpckvstore.Packet.Packet;
 import manuel.rpckvstore.Packet.Promise;
 
+import java.rmi.RemoteException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -43,7 +44,11 @@ public class PaxosConsensusSteps {
     private List<Promise> prepare(String key, float ballot) {
         List<Promise> promises = new ArrayList<>();
         for (PaxosAcceptor a : acceptors) {
-            promises.add(a.propose(key, ballot));
+            try {
+                promises.add(a.Propose(key, ballot));
+            } catch (RemoteException e) {
+                e.printStackTrace();
+            }
         }
         return promises;
     }
@@ -65,9 +70,14 @@ public class PaxosConsensusSteps {
         Packet chosen = PaxosProposer.chooseAcceptedValue(promises, put(key, value));
         int accepted = 0;
         for (PaxosAcceptor a : acceptors) {
-            Packet response = a.accept(ballot, chosen);
-            if ("Accepted".equals(response.getResponse())) {
-                accepted++;
+            Packet response;
+            try {
+                response = a.Accept(ballot, chosen);
+                if ("Accepted".equals(response.getResponse())) {
+                accepted++;}
+            } catch (RemoteException e) {
+                e.printStackTrace();
+            
             }
         }
         lastChosen = chosen;

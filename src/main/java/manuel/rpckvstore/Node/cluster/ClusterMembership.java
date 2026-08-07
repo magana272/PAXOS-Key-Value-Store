@@ -1,6 +1,6 @@
 package manuel.rpckvstore.Node.cluster;
 
-import manuel.rpckvstore.Node.BaseServer;
+import manuel.rpckvstore.Node.MembershipRpc;
 import manuel.rpckvstore.Node.Response;
 import manuel.rpckvstore.NodeAddress;
 
@@ -19,7 +19,7 @@ public class ClusterMembership {
     private final String initialNodeIp;
     private final String initialNodePort;
     private final PeerDirectory peers;
-    private final RmiTransport transport;
+    private final Transport transport;
 
     public ClusterMembership(String selfId,
                              Supplier<String> selfIp,
@@ -27,7 +27,7 @@ public class ClusterMembership {
                              String initialNodeIp,
                              String initialNodePort,
                              PeerDirectory peers,
-                             RmiTransport transport) {
+                             Transport transport) {
         this.selfId = selfId;
         this.selfIp = selfIp;
         this.selfPort = selfPort;
@@ -51,9 +51,9 @@ public class ClusterMembership {
         } catch (RemoteException e) {
             throw new RuntimeException(e);
         }
-        BaseServer stub;
+        MembershipRpc stub;
         try {
-            stub = (BaseServer) registry.lookup("Node-0");
+            stub = (MembershipRpc) registry.lookup("Node-0");
         } catch (NotBoundException | RemoteException e) {
             throw new RuntimeException(e);
         }
@@ -74,7 +74,7 @@ public class ClusterMembership {
             System.out.println("Informing");
             System.out.println(node.toString());
             try {
-                BaseServer stub = transport.lookup(node);
+                MembershipRpc stub = transport.lookup(node);
                 stub.inform(snapshot);
             } catch (Exception e) {
                 System.err.println("Failed to inform node " + node + ": " + e.getMessage());

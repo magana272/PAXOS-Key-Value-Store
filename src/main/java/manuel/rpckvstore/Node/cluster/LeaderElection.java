@@ -9,11 +9,16 @@ public class LeaderElection {
 
     private final PeerDirectory peers;
     private NodeAddress leaderAddress;
-    private final RmiTransport transport  = new RmiTransport();
+    private final Transport transport;
     private BaseServer leaderServer;
 
     public LeaderElection(PeerDirectory peers) {
+        this(peers, new RmiTransport());
+    }
+
+    public LeaderElection(PeerDirectory peers, Transport transport) {
         this.peers = peers;
+        this.transport = transport;
     }
 
     public synchronized BaseServer current() {

@@ -155,7 +155,7 @@ manuel.rpckvstore/
       ProposerInterface.java         -- remote contract
       PaxosProposer.java             -- bounded-retry two-phase driver
     Acceptor/
-      AcceptorInterface.java         -- remote contract
+      AbstractAcceptor.java         -- remote contract
       PaxosAcceptor.java             -- promise state + broadcast-then-apply
     Learner/
       LearnerInterface.java          -- remote contract
@@ -173,7 +173,7 @@ manuel.rpckvstore/
     TransactionPacket.java, Vote.java, Ack.java, TYPE.java
 ```
 
-`Node` is a thin facade: it implements `BaseServer` (which extends `ProposerInterface`, `AcceptorInterface`, and `LearnerInterface`) and forwards each RMI call to the matching collaborator. `PaxosProposer` walks the `PeerDirectory` snapshot and drives the two-phase round through `RmiTransport`.
+`Node` is a thin facade: it implements `BaseServer` (which extends `ProposerInterface`, `AbstractAcceptor`, and `LearnerInterface`) and forwards each RMI call to the matching collaborator. `PaxosProposer` walks the `PeerDirectory` snapshot and drives the two-phase round through `RmiTransport`.
 
 ## Transaction Flow
 
@@ -181,7 +181,7 @@ manuel.rpckvstore/
 2. The receiving node checks `leader.isAlive()`; if the leader is missing or dead, it drops the leader from `PeerDirectory`, calls `ClusterMembership.informOfNewNode()` to push the new view, and runs `LeaderElection.elect()` (max-ID wins).
 3. The node forwards a `TransactionPacket` to the leader via `BaseServer.hasTransaction()`.
 4. On the leader, `PaxosProposer.propose()` runs a round with a fresh proposal id (`sequenceNumber + "." + nodeId`). Phase 1 (Propose) collects votes from all peers via `RmiTransport`; a strict majority of `Ack.YES` is required.
-5. Phase 2 (Accept) is run in parallel using a per-round thread pool. Each peer's `PaxosAcceptor.accept()` either returns the packet marked `Ignored` (its promise has moved on), or -- with probability `1 - ACCEPT_FAIL` -- broadcasts `Learn` to every peer and applies the packet locally through `PaxosLearner`. Per-peer futures are bounded by `PaxosConfig.ACCEPT_PHASE_TIMEOUT_MS` (100 ms).
+5. Phase 2 (Accept) is run in parallel using a per-round thread pool. Each peer's `Paxosacceptor.Accept()` either returns the packet marked `Ignored` (its promise has moved on), or -- with probability `1 - ACCEPT_FAIL` -- broadcasts `Learn` to every peer and applies the packet locally through `PaxosLearner`. Per-peer futures are bounded by `PaxosConfig.ACCEPT_PHASE_TIMEOUT_MS` (100 ms).
 6. `PaxosLearner.apply()` dispatches the packet through `KvTasks` against the in-memory `KeyValueStore` and returns the response.
 7. If the round falls short of a majority at any phase, `PaxosProposer` retries with a fresh sequence number up to `PaxosConfig.PROPOSER_MAX_ATTEMPTS` (10). After that, it throws `RemoteException`.
 

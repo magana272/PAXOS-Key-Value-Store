@@ -209,7 +209,7 @@ def figures(saturation, repo_root, cluster_name="saturation"):
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description="Paxos saturation / performance harness")
     p.add_argument("--config", choices=["clean", "chaos"], default="chaos")
-    p.add_argument("--sweep", default="1,2,4,8,16,32")
+    p.add_argument("--sweep", default="1,2,4,8,16,32,64")
     p.add_argument("--writers", type=int, default=6)
     p.add_argument("--reads", type=int, default=12)
     p.add_argument("--repeats", type=int, default=6)

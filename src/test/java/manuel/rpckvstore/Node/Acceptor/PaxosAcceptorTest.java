@@ -14,6 +14,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.rmi.RemoteException;
+
 public class PaxosAcceptorTest {
 
     private KeyValueStore kv;
@@ -35,35 +37,35 @@ public class PaxosAcceptorTest {
     }
 
     @Test
-    void firstProposeSetsPromise() {
+    void firstProposeSetsPromise() throws RemoteException {
         assertNull(acceptor.promisedSequenceNumber("k"));
 
-        assertTrue(acceptor.propose("k", 1.5f).isPromised());
+        assertTrue(acceptor.Propose("k", 1.5f).isPromised());
         assertEquals(1.5f, acceptor.promisedSequenceNumber("k"));
     }
 
     @Test
-    void lowerProposalAfterPromiseIsRejected() {
-        acceptor.propose("k", 5.0f);
+    void lowerProposalAfterPromiseIsRejected() throws RemoteException {
+        acceptor.Propose("k", 5.0f);
 
-        assertFalse(acceptor.propose("k", 1.0f).isPromised());
+        assertFalse(acceptor.Propose("k", 1.0f).isPromised());
         assertEquals(5.0f, acceptor.promisedSequenceNumber("k"));
     }
 
     @Test
-    void higherProposalUpdatesPromise() {
-        acceptor.propose("k", 2.0f);
+    void higherProposalUpdatesPromise() throws RemoteException {
+        acceptor.Propose("k", 2.0f);
 
-        acceptor.propose("k", 7.0f);
+        acceptor.Propose("k", 7.0f);
 
         assertEquals(7.0f, acceptor.promisedSequenceNumber("k"));
     }
 
     @Test
-    void acceptBelowPromiseIsIgnored() {
-        acceptor.propose("k", 5.0f);
+    void acceptBelowPromiseIsIgnored() throws RemoteException {
+        acceptor.Propose("k", 5.0f);
 
-        Packet response = acceptor.accept(1.0f, put("k", "v"));
+        Packet response = acceptor.Accept(1.0f, put("k", "v"));
 
         assertEquals("Ignored", response.getResponse());
         assertEquals(KeyValueStore.MISSING_KEY_SENTINEL, kv.Get("k"),
@@ -71,8 +73,8 @@ public class PaxosAcceptorTest {
     }
 
     @Test
-    void freshAcceptorPromisesWithNoAcceptedValue() {
-        Promise promise = acceptor.propose("k", 1.0f);
+    void freshAcceptorPromisesWithNoAcceptedValue() throws RemoteException {
+        Promise promise = acceptor.Propose("k", 1.0f);
 
         assertTrue(promise.isPromised());
         assertFalse(promise.hasAcceptedValue(),
@@ -81,10 +83,10 @@ public class PaxosAcceptorTest {
     }
 
     @Test
-    void promiseReportsPreviouslyAcceptedValue() {
-        acceptor.propose("k", 1.0f);
-        acceptor.accept(1.0f, put("k", "v"));
-        Promise promise = acceptor.propose("k", 2.0f);
+    void promiseReportsPreviouslyAcceptedValue() throws RemoteException {
+        acceptor.Propose("k", 1.0f);
+        acceptor.Accept(1.0f, put("k", "v"));
+        Promise promise = acceptor.Propose("k", 2.0f);
         assertTrue(promise.isPromised());
         assertTrue(promise.hasAcceptedValue());
         assertEquals(1.0f, promise.getAcceptedBallot().floatValue());
@@ -92,11 +94,11 @@ public class PaxosAcceptorTest {
     }
 
     @Test
-    void advanceInstanceClearsAcceptedValueSoNextRoundStartsFresh() {
-        acceptor.propose("k", 1.0f);
-        acceptor.accept(1.0f, put("k", "v"));
+    void advanceInstanceClearsAcceptedValueSoNextRoundStartsFresh() throws RemoteException {
+        acceptor.Propose("k", 1.0f);
+        acceptor.Accept(1.0f, put("k", "v"));
         acceptor.advanceInstance("k");
-        Promise promise = acceptor.propose("k", 2.0f);
+        Promise promise = acceptor.Propose("k", 2.0f);
 
         assertTrue(promise.isPromised());
         assertFalse(promise.hasAcceptedValue(),
@@ -107,9 +109,9 @@ public class PaxosAcceptorTest {
     }
 
     @Test
-    void acceptRecordsButDoesNotApplyBeforeCommit() {
-        acceptor.propose("k", 1.0f);
-        Packet response = acceptor.accept(1.0f, put("k", "v"));
+    void acceptRecordsButDoesNotApplyBeforeCommit() throws RemoteException {
+        acceptor.Propose("k", 1.0f);
+        Packet response = acceptor.Accept(1.0f, put("k", "v"));
 
         assertEquals("Accepted", response.getResponse());
         assertEquals(KeyValueStore.MISSING_KEY_SENTINEL, kv.Get("k"),
@@ -118,20 +120,20 @@ public class PaxosAcceptorTest {
 
     @Test
     @Tag("spec")
-    void unrelatedKeysDoNotShareConsensusState() {
-        acceptor.propose("alpha", 5.0f);
+    void unrelatedKeysDoNotShareConsensusState() throws RemoteException {
+        acceptor.Propose("alpha", 5.0f);
 
-        Promise p = acceptor.propose("beta", 2.0f);
+        Promise p = acceptor.Propose("beta", 2.0f);
 
         assertTrue(p.isPromised(),
                 "an unrelated key's ballot must not be blocked by another key's promise");
     }
 
     @Test
-    void equalBallotDoesNotRejectAndKeepsPromise() {
-        acceptor.propose("k", 5.0f);
+    void equalBallotDoesNotRejectAndKeepsPromise() throws RemoteException {
+        acceptor.Propose("k", 5.0f);
 
-        Promise p = acceptor.propose("k", 5.0f);
+        Promise p = acceptor.Propose("k", 5.0f);
 
         assertTrue(p.isPromised(),
                 "an equal ballot is not below the promise, so it is not rejected (impl guards id < promised)");
@@ -139,11 +141,11 @@ public class PaxosAcceptorTest {
     }
 
     @Test
-    void acceptReturnsNullWhenFailRateForcesDrop() {
+    void acceptReturnsNullWhenFailRateForcesDrop() throws RemoteException {
         new PaxosConfig(1.0f, 0f);
-        acceptor.propose("k", 1.0f);
+        acceptor.Propose("k", 1.0f);
 
-        assertNull(acceptor.accept(1.0f, put("k", "v")),
+        assertNull(acceptor.Accept(1.0f, put("k", "v")),
                 "a forced accept failure must drop the packet (return null)");
         assertEquals(KeyValueStore.MISSING_KEY_SENTINEL, kv.Get("k"));
     }
@@ -156,10 +158,10 @@ public class PaxosAcceptorTest {
     }
 
     @Test
-    void higherPromiseThenStaleAcceptIsIgnoredAndPromiseSurvives() {
-        acceptor.propose("k", 5.0f);
+    void higherPromiseThenStaleAcceptIsIgnoredAndPromiseSurvives() throws RemoteException {
+        acceptor.Propose("k", 5.0f);
 
-        Packet response = acceptor.accept(1.0f, put("k", "stale"));
+        Packet response = acceptor.Accept(1.0f, put("k", "stale"));
 
         assertEquals("Ignored", response.getResponse(),
                 "an accept below the promised ballot must be ignored");

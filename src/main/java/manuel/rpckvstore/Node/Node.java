@@ -9,17 +9,11 @@ import manuel.rpckvstore.Node.cluster.Leader;
 import manuel.rpckvstore.Node.cluster.PeerDirectory;
 import manuel.rpckvstore.Node.cluster.RmiTransport;
 import manuel.rpckvstore.NodeAddress;
-import manuel.rpckvstore.Logger.Logger;
 import manuel.rpckvstore.Packet.Promise;
-import manuel.rpckvstore.Packet.TYPE;
 import manuel.rpckvstore.Packet.Packet;
 import manuel.rpckvstore.Packet.TransactionPacket;
 import manuel.rpckvstore.Packet.Vote;
 
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
 import java.io.Serializable;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -45,7 +39,7 @@ public class Node implements BaseServer, Serializable {
     private final PaxosProposer proposer;
     private final ClusterMembership membership;
     private final Leader leader;
-    private BufferedWriter Log;
+    private final CommitLog commitLog;
 
     public Node(String NodeID,
                 String InitializeNodeIP,
@@ -67,8 +61,7 @@ public class Node implements BaseServer, Serializable {
         this(NodeID, InitializeNodeIP, InitializeNodePortNumber, portNumber,
                 acceptorFailRate, proposerFailRate, messageLossRate, null, envClusterName());
     }
-    // Test seam: pins the leader-routing so the non-leader forward path can be
-    // exercised without RMI. Production ctors funnel through here with null.
+
     Node(String NodeID,
          String InitializeNodeIP,
          String InitializeNodePortNumber,
@@ -120,16 +113,10 @@ public class Node implements BaseServer, Serializable {
         this.proposer = new PaxosProposer(NodeID, peers, transport);
         this.membership = new ClusterMembership(NodeID, () -> ServerAddress, portNumber,
                 InitializeNodeIP, InitializeNodePortNumber, peers, transport);
-        this.leader = (leaderOverride != null) ? leaderOverride : new Leader(peers, membership, learner.store());
-        try{
-            String logDir = System.getenv().getOrDefault("LOG_DIR", "logs/" + this.clusterName + "/" + this.NodeID);
-            File dir = new File(logDir);
-            dir.mkdirs();
-            this.Log = new BufferedWriter(new FileWriter(new File(dir, "log.txt")));
-        }catch(IOException e){
-            Logger.error("Failed to open commit log", e);
-        }
-
+        this.leader = (leaderOverride != null) ? leaderOverride
+                : new Leader(peers, membership, learner.store(), transport);
+        String logDir = System.getenv().getOrDefault("LOG_DIR", "logs/" + this.clusterName + "/" + this.NodeID);
+        this.commitLog = new CommitLog(logDir);
     }
 
     public String getNodeID() {
@@ -155,7 +142,7 @@ public class Node implements BaseServer, Serializable {
     public String getInitializeNodePortNumber() {
         return InitializeNodePortNumber;
     }
-    
+
     public Set<NodeAddress> getNodeAddresses() {
         return peers.view();
     }
@@ -170,18 +157,17 @@ public class Node implements BaseServer, Serializable {
     }
 
     @Override
-    public Promise Propose(String key, float id) {
-        return acceptor.propose(key, id);
+    public Promise Propose(String key, float id) throws RemoteException {
+        return acceptor.Propose(key, id);
     }
 
     @Override
-    public Packet Accept(float sequenceNumber, Packet packet) {
-        return acceptor.accept(sequenceNumber, packet);
+    public Packet Accept(float sequenceNumber, Packet packet) throws RemoteException {
+        return acceptor.Accept(sequenceNumber, packet);
     }
 
     @Override
     public void Learn(Packet packet) {
-        System.out.println("========Learning===============");
         leader.apply(packet);
     }
 
@@ -192,13 +178,6 @@ public class Node implements BaseServer, Serializable {
 
     @Override
     public Response Get(Packet p) throws RemoteException {
-        // Reads are served by the leader, not this replica. The leader holds every
-        // majority-committed value (commit runs only after a strict-majority
-        // accept), so a leader read is consistent without a Paxos round -- and it
-        // closes the stale-read hole a local read leaves open when this replica
-        // missed a commit while it was down. read() serves it locally when this
-        // node is the leader (or standalone) and forwards to the elected leader
-        // otherwise. Response.body carries the raw value the harness hashes.
         return leader.read(NodeID, p);
     }
 
@@ -207,8 +186,6 @@ public class Node implements BaseServer, Serializable {
         return submit(p);
     }
 
-    // Every client operation is a decree: wrap it and hand it to the leader,
-    // which runs (or forwards to) consensus for this key.
     private Response submit(Packet p) throws RemoteException {
         return leader.submit(new TransactionPacket(p, Vote.YES));
     }
@@ -255,34 +232,22 @@ public class Node implements BaseServer, Serializable {
     public Response Commit(Packet packet) throws RemoteException {
         learner.apply(packet);
         acceptor.advanceInstance(packet.getKey());
-        if (this.Log != null) {
-            try{
-                synchronized (this.Log) {
-                    this.Log.write(packet.getrequest().toString());
-                    this.Log.newLine();
-                    this.Log.flush();
-                }
-            }catch(IOException e){
-                Logger.error("Failed to write commit to log", e);
-            }
-        }
+        commitLog.append(packet.getrequest().toString());
         return null;
-
     }
-     @Override
+
+    @Override
     public boolean equals(Object obj) {
         if (this == obj) {
             return true;
         }
-
         if (obj == null || getClass() != obj.getClass()) {
             return false;
         }
-
         NodeAddress other = (NodeAddress) obj;
-
         return getNodeID() == other.getId();
     }
+
     public static void main(String[] args) {
         if (args.length < 5) {
             System.err.println("Usage: java PaxosNode <nodeID> <myIP> <myPort> <initIP> <initPort> [--init]");

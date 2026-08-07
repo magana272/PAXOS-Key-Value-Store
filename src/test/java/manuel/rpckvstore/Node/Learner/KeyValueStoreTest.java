@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class KeyValueStoreTest {
 
     @Test
-    public void concurrentPutsResolveToOneWinner() throws Exception {
+    public void concurrentPutsResolveToOneValue() throws Exception {
         KeyValueStore kv = new KeyValueStore();
         int writers = 16;
         ExecutorService pool = Executors.newFixedThreadPool(writers);
@@ -34,11 +34,12 @@ public class KeyValueStoreTest {
             pool.shutdownNow();
         }
 
-        assertEquals(1, successes.get(),
-                "exactly one putter must win when many race on the same key");
+        assertEquals(writers, successes.get(),
+                "last-write-wins: every putter succeeds");
         String winner = kv.Get("contended");
         assertNotNull(winner);
-        assertTrue(winner.startsWith("v"), "winner should be one of the proposed values");
+        assertTrue(winner.startsWith("v"),
+                "the surviving value must be exactly one of the proposed values, never corrupted");
     }
 
     @Test
