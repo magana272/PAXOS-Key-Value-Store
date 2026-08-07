@@ -34,23 +34,23 @@ public class KVStoreSteps {
 
     @Given("{string} is already set to {string}")
     public void keyAlreadySetTo(String key, String value) {
-        assertTrue(kv.put(key, value),
+        assertTrue(kv.Put(key, value),
                 "precondition put for key '" + key + "' should succeed on a fresh store");
     }
 
     @When("I put {string} with value {string}")
     public void iPutWithValue(String key, String value) {
-        lastPutResult = kv.put(key, value);
+        lastPutResult = kv.Put(key, value);
     }
 
     @When("I delete {string}")
     public void iDelete(String key) {
-        lastDeleteResult = kv.delete(key);
+        lastDeleteResult = kv.Delete(key) != null;
     }
 
     @Then("getting {string} returns {string}")
     public void gettingReturns(String key, String expected) {
-        assertEquals(expected, kv.get(key));
+        assertEquals(expected, kv.Get(key));
     }
 
     @Then("the put result is false")

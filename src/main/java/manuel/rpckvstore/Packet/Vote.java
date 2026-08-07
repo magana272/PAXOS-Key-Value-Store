@@ -1,6 +1,6 @@
 package manuel.rpckvstore.Packet;
 
-public enum Vote implements java.io.Serializable {
+public enum Vote{
     NO,
     YES
 

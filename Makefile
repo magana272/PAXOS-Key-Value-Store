@@ -8,7 +8,7 @@
 MVN ?= mvn
 JAR := target/KVStore2PC.jar
 
-.PHONY: help build test up down client smoke logs clean
+.PHONY: help build test up down client smoke thread load logs clean validate validate-paxos validate-paxos-easy validate-paxos-hard saturation metrics
 
 help:
 	@echo "Targets:"
@@ -18,6 +18,11 @@ help:
 	@echo "  down    - tear down the cluster"
 	@echo "  client  - interactive REPL against the live cluster"
 	@echo "  smoke   - PUT/GET round-trip assertion"
+	@echo "  thread  - concurrent client self-check"
+	@echo "  validate-paxos - correctness gate (python3 -m validation)"
+	@echo "  saturation     - performance harness (T1/T2/T3, informational)"
+	@echo "  validate       - fault-tolerance/latency matrix -> metrics/"
+	@echo "  metrics        - render figures from metrics/ (generate_charts.py)"
 	@echo "  logs    - follow docker compose logs"
 	@echo "  clean   - mvn clean + remove generated docker-compose.yml"
 
@@ -42,6 +47,10 @@ down:
 client: docker-compose.yml
 	bash scripts/client.sh
 
+thread: docker-compose.yml
+	bash scripts/threadedexample.sh
+load: docker-compose.yml
+	bash scripts/load.sh
 smoke: docker-compose.yml
 	bash scripts/dockertest.sh
 
@@ -51,3 +60,20 @@ logs:
 clean:
 	$(MVN) -q clean
 	rm -f docker-compose.yml
+	rm -rf metrics/
+	rm -rf ./img 
+	rm -rf ./logs
+validate:
+	bash scripts/validate.sh
+ 
+metrics:
+	python3 scripts/generate_charts.py
+
+# Correctness gate: one cluster, all four validators
+# (linearizability, missing_key, quorum_tolerance, retry_convergence).
+validate-paxos:
+	python3 -m validation
+
+# Performance (informational, not a gate): T1 sweep / T2 drift / T3 recovery.
+saturation:
+	python3 scripts/saturation.py --config chaos

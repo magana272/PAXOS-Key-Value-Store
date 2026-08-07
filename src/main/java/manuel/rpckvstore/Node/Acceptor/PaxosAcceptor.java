@@ -1,87 +1,74 @@
 package manuel.rpckvstore.Node.Acceptor;
 
-import manuel.rpckvstore.Node.BaseServer;
-import manuel.rpckvstore.Node.Learner.PaxosLearner;
 import manuel.rpckvstore.Node.PaxosConfig;
-import manuel.rpckvstore.Node.cluster.PeerDirectory;
-import manuel.rpckvstore.Node.cluster.RmiTransport;
-import manuel.rpckvstore.NodeAddress;
-import manuel.rpckvstore.Packet.Ack;
 import manuel.rpckvstore.Packet.Packet;
+import manuel.rpckvstore.Packet.Promise;
 
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 
 public class PaxosAcceptor {
-
-    private final PaxosConfig config;
-    private final ExecutorService executor;
-    private final PeerDirectory peers;
-    private final RmiTransport transport;
-    private final PaxosLearner learner;
-
-    private Float promisedSequenceNumber;
-
-    public PaxosAcceptor(PaxosConfig config,
-                         ExecutorService executor,
-                         PeerDirectory peers,
-                         RmiTransport transport,
-                         PaxosLearner learner) {
-        this.config = config;
-        this.executor = executor;
-        this.peers = peers;
-        this.transport = transport;
-        this.learner = learner;
+    private static final class Register {
+        private Float promisedSequenceNumber;
+        private Float acceptedBallot;
+        private Packet acceptedValue;
     }
 
-    public Float promisedSequenceNumber() {
-        return promisedSequenceNumber;
+    private final ConcurrentHashMap<String, Register> registers = new ConcurrentHashMap<>();
+
+    private Register register(String key) {
+        return registers.computeIfAbsent(key, k -> new Register());
     }
 
-    public Ack propose(float id) {
-        if (promisedSequenceNumber == null) {
-            promisedSequenceNumber = id;
-            return Ack.YES;
+    public Float promisedSequenceNumber(String key) {
+        Register r = registers.get(key);
+        if (r == null) {
+            return null;
         }
-        if (id < promisedSequenceNumber) {
-            return Ack.NO;
+        synchronized (r) {
+            return r.promisedSequenceNumber;
         }
-        promisedSequenceNumber = id;
-        return Ack.YES;
+    }
+
+    public Promise propose(String key, float id) {
+        Register r = register(key);
+        synchronized (r) {
+            if (r.promisedSequenceNumber != null && id < r.promisedSequenceNumber) {
+                return Promise.rejected();
+            }
+            r.promisedSequenceNumber = id;
+            return Promise.of(r.acceptedBallot, r.acceptedValue);
+        }
     }
 
     public Packet accept(float sequenceNumber, Packet packet) {
-        if (promisedSequenceNumber != null && sequenceNumber < promisedSequenceNumber) {
-            packet.setResponse("Ignored");
-            return packet;
+        if (PaxosConfig.acceptorFailRate > 0
+                && ThreadLocalRandom.current().nextFloat() < PaxosConfig.acceptorFailRate) {
+            System.out.println("Simulating An Accept Failure");
+            return null;
         }
-        Future<Packet> future = executor.submit(broadcastThenApply(packet));
-        try {
-            return future.get();
-        } catch (InterruptedException | ExecutionException e) {
-            throw new RuntimeException(e);
+        Register r = register(packet.getKey());
+        synchronized (r) {
+            if (r.promisedSequenceNumber != null && sequenceNumber < r.promisedSequenceNumber) {
+                packet.setResponse("Ignored");
+                return packet;
+            }
+            r.promisedSequenceNumber = sequenceNumber;
+            r.acceptedBallot = sequenceNumber;
+            r.acceptedValue = packet;
+            packet.setResponse("Accepted");
+            return packet;
         }
     }
 
-    private Callable<Packet> broadcastThenApply(Packet packet) {
-        return () -> {
-            if (ThreadLocalRandom.current().nextFloat() < config.acceptorFailRate()) {
-                System.out.println("Simulating An Accept Failure");
-                Thread.sleep(Long.MAX_VALUE);
-                return null;
-            }
-            for (NodeAddress peer : peers.snapshot()) {
-                try {
-                    BaseServer stub = transport.lookup(peer);
-                    stub.Learn(packet);
-                } catch (Exception e) {
-                    System.out.println("Failed to learn node: " + peer);
-                }
-            }
-            return learner.apply(packet);
-        };
+    public void advanceInstance(String key) {
+        Register r = registers.get(key);
+        if (r == null) {
+            return;
+        }
+        synchronized (r) {
+            r.acceptedBallot = null;
+            r.acceptedValue = null;
+        }
     }
 }

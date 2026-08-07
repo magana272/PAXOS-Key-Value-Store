@@ -2,17 +2,21 @@ package manuel.rpckvstore.Node.Proposer;
 
 import manuel.rpckvstore.Node.BaseServer;
 import manuel.rpckvstore.Node.PaxosConfig;
+import manuel.rpckvstore.Node.Response;
 import manuel.rpckvstore.Node.cluster.PeerDirectory;
 import manuel.rpckvstore.Node.cluster.RmiTransport;
 import manuel.rpckvstore.NodeAddress;
-import manuel.rpckvstore.Packet.Ack;
+import manuel.rpckvstore.Logger.Logger;
 import manuel.rpckvstore.Packet.Packet;
+import manuel.rpckvstore.Packet.Promise;
+import manuel.rpckvstore.Packet.TYPE;
 import manuel.rpckvstore.Packet.TransactionPacket;
-import manuel.rpckvstore.Packet.Vote;
 
 import java.rmi.RemoteException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -23,99 +27,136 @@ public class PaxosProposer {
     private final String nodeId;
     private final PeerDirectory peers;
     private final RmiTransport transport;
-    private final PaxosConfig config;
 
-    private long sequenceNumber = 0;
+    
+    private final ExecutorService roundExecutor = Executors.newCachedThreadPool();
+    private final ConcurrentHashMap<String, Long> sequenceByKey = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Object> keyLocks = new ConcurrentHashMap<>();
 
     public PaxosProposer(String nodeId,
                          PeerDirectory peers,
-                         RmiTransport transport,
-                         PaxosConfig config) {
+                         RmiTransport transport) {
         this.nodeId = nodeId;
         this.peers = peers;
         this.transport = transport;
-        this.config = config;
     }
 
-    public long sequenceNumber() {
-        return sequenceNumber;
+    private Object lockFor(String key) {
+        return keyLocks.computeIfAbsent(key, k -> new Object());
     }
 
-    public Packet propose(TransactionPacket tranPacket) throws RemoteException {
-        tranPacket.getPacket().logRecievedRequest();
-        for (int attempt = 0; attempt < PaxosConfig.PROPOSER_MAX_ATTEMPTS; attempt++) {
-            Packet committed = runRound(tranPacket);
-            if (committed != null) {
-                return committed;
+    public Response propose(TransactionPacket tranPacket) throws RemoteException {
+        Packet packet = tranPacket.getPacket();
+        String key = packet.getKey();
+        Logger.log(packet);
+        synchronized (lockFor(key)) {
+            for (int attempt = 0; attempt < PaxosConfig.PROPOSER_MAX_ATTEMPTS; attempt++) {
+                Response committed = runRound(key, tranPacket);
+                if (committed != null) {
+                    return committed;
+                }
+                System.out.println("========Retrying Paxos (attempt " + (attempt + 1) + ")========");
             }
-            System.out.println("========Retrying Paxos (attempt " + (attempt + 1) + ")========");
         }
         throw new RemoteException("Paxos failed to reach consensus after "
                 + PaxosConfig.PROPOSER_MAX_ATTEMPTS + " attempts");
     }
 
-    private Packet runRound(TransactionPacket tranPacket) {
-        sequenceNumber++;
+    private Response runRound(String key, TransactionPacket tranPacket) {
+        long sequenceNumber = sequenceByKey.merge(key, 1L, Long::sum);
         float currentProposal = Float.parseFloat(sequenceNumber + "." + nodeId);
-
-        List<Vote> votes = collectVotes(currentProposal);
+        List<Promise> promises = this.collectPromises(key, currentProposal);
         int participantCount = peers.size();
         int strictMajority = participantCount / 2 + 1;
-        long yesVotes = votes.stream().filter(v -> v == Vote.YES).count();
-        if (yesVotes < strictMajority) {
+        long promised = promises.stream().filter(Promise::isPromised).count();
+        if (promised < strictMajority) {
             return null;
         }
-        return runAcceptPhase(currentProposal, tranPacket.getPacket(), strictMajority);
+        Packet valueToPropose = chooseAcceptedValue(promises, tranPacket.getPacket());
+        return runAcceptPhase(currentProposal, valueToPropose, strictMajority);
     }
 
-    private List<Vote> collectVotes(float proposal) {
-        List<Vote> votes = new ArrayList<>();
-        for (NodeAddress peer : peers.snapshot()) {
+    private List<Promise> collectPromises(String key, float proposal) {
+        List<Promise> promises = new ArrayList<>();
+        for (NodeAddress peer : this.peers.snapshot()) {
             try {
-                BaseServer stub = transport.lookup(peer);
-                Ack ack = stub.Propose(proposal);
-                votes.add(ack == Ack.NO ? Vote.NO : Vote.YES);
+                BaseServer stub = this.transport.lookupWithLoss(peer);
+                promises.add(stub.Propose(key, proposal));
             } catch (Exception e) {
-                votes.add(Vote.NO);
+                promises.add(Promise.rejected());
             }
         }
-        return votes;
+        return promises;
     }
 
-    private Packet runAcceptPhase(float proposal, Packet payload, int strictMajority) {
-        int parallelism = Math.max(1, peers.size());
-        ExecutorService roundExecutor = Executors.newFixedThreadPool(parallelism);
-        try {
-            List<Future<Packet>> futures = new ArrayList<>();
-            for (NodeAddress peer : peers.snapshot()) {
-                futures.add(roundExecutor.submit(() -> {
-                    try {
-                        BaseServer stub = transport.lookup(peer);
-                        return stub.Accept(proposal, payload);
-                    } catch (Exception e) {
-                        return null;
-                    }
-                }));
+    public static Packet chooseAcceptedValue(List<Promise> promises, Packet own) {
+        Float highestBallot = null;
+        Packet chosen = own;
+        for (Promise p : promises) {
+            if (p.isPromised() && p.hasAcceptedValue()
+                    && (highestBallot == null || p.getAcceptedBallot() > highestBallot)) {
+                highestBallot = p.getAcceptedBallot();
+                chosen = p.getAcceptedValue();
             }
-            int successCount = 0;
-            Packet committedPacket = null;
-            for (Future<Packet> future : futures) {
+        }
+        return chosen;
+    }
+
+    private Response runAcceptPhase(float proposal, Packet payload, int strictMajority) {
+        List<Callable<Packet>> tasks = new ArrayList<>();
+        for (NodeAddress peer : this.peers.snapshot()) {
+            tasks.add(() -> {
                 try {
-                    Packet response = future.get(PaxosConfig.ACCEPT_PHASE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-                    if (response != null && !"Ignored".equals(response.getResponse())) {
-                        successCount++;
-                        committedPacket = response;
+                    BaseServer stub = transport.lookupWithLoss(peer);
+                    return stub.Accept(proposal, payload);
+                } catch (Exception e) {
+                    return null;
+                }
+            });
+        }
+        int accepted = 0;
+        try {
+            List<Future<Packet>> futures = roundExecutor.invokeAll(
+                    tasks, PaxosConfig.ACCEPT_PHASE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            for (Future<Packet> future : futures) {
+                if (future.isCancelled()) {
+                    continue;
+                }
+                try {
+                    Packet response = future.get();
+                    if (response != null && "Accepted".equals(response.getResponse())) {
+                        accepted++;
+                        if (accepted >=strictMajority){
+                            commitChosenValue(payload);
+                            if (payload.getType() == TYPE.DELETE){
+                                return new Response("DELETE: "+ payload.getKey(), Logger.formatTime(System.currentTimeMillis()));
+                            }
+                            else if(payload.getType() == TYPE.PUT){
+                                return new Response("PUT: "+ payload.getKey() + " " + Logger.formatTime(System.currentTimeMillis()),  payload.getValue());
+                            }
+                            
+                        }
                     }
                 } catch (Exception e) {
-                    System.err.println("Accept phase: peer failed or timed out (Paxos still alive on majority)");
+                    System.err.println("Accept phase: peer failed (Paxos still alive on majority)");
                 }
             }
-            if (successCount < strictMajority || committedPacket == null) {
-                return null;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        }        
+        return null;
+
+    }
+
+    private void commitChosenValue(Packet chosen) {
+        for (NodeAddress peer : this.peers.snapshot()) {
+            try {
+                BaseServer stub = transport.lookup(peer);
+                stub.Commit(chosen);
+            } catch (Exception e) {
+                Logger.error("Committing", e);
             }
-            return committedPacket;
-        } finally {
-            roundExecutor.shutdownNow();
         }
     }
 }

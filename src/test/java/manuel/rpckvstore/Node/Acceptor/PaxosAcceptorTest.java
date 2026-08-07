@@ -1,45 +1,33 @@
 package manuel.rpckvstore.Node.Acceptor;
 
 import manuel.rpckvstore.Node.Learner.KeyValueStore;
-import manuel.rpckvstore.Node.Learner.PaxosLearner;
 import manuel.rpckvstore.Node.PaxosConfig;
-import manuel.rpckvstore.Node.cluster.PeerDirectory;
-import manuel.rpckvstore.Node.cluster.RmiTransport;
-import manuel.rpckvstore.NodeAddress;
-import manuel.rpckvstore.Packet.Ack;
 import manuel.rpckvstore.Packet.Packet;
+import manuel.rpckvstore.Packet.Promise;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class PaxosAcceptorTest {
 
-    private ExecutorService executor;
     private KeyValueStore kv;
     private PaxosAcceptor acceptor;
 
     @BeforeEach
     void setUp() {
-        executor = Executors.newSingleThreadExecutor();
         kv = new KeyValueStore();
-        PeerDirectory peers = new PeerDirectory(new NodeAddress("self", "localhost", "1099"));
-        acceptor = new PaxosAcceptor(
-                new PaxosConfig(0f, 0f),
-                executor,
-                peers,
-                new RmiTransport(),
-                new PaxosLearner(kv, executor));
+        acceptor = new PaxosAcceptor();
     }
 
     @AfterEach
-    void tearDown() {
-        executor.shutdownNow();
+    void resetFailRate() {
+        new PaxosConfig(0f, 0f);
     }
 
     private static Packet put(String k, String v) {
@@ -48,37 +36,136 @@ public class PaxosAcceptorTest {
 
     @Test
     void firstProposeSetsPromise() {
-        assertNull(acceptor.promisedSequenceNumber());
+        assertNull(acceptor.promisedSequenceNumber("k"));
 
-        assertEquals(Ack.YES, acceptor.propose(1.5f));
-        assertEquals(1.5f, acceptor.promisedSequenceNumber());
+        assertTrue(acceptor.propose("k", 1.5f).isPromised());
+        assertEquals(1.5f, acceptor.promisedSequenceNumber("k"));
     }
 
     @Test
     void lowerProposalAfterPromiseIsRejected() {
-        acceptor.propose(5.0f);
+        acceptor.propose("k", 5.0f);
 
-        assertEquals(Ack.NO, acceptor.propose(1.0f));
-        assertEquals(5.0f, acceptor.promisedSequenceNumber());
+        assertFalse(acceptor.propose("k", 1.0f).isPromised());
+        assertEquals(5.0f, acceptor.promisedSequenceNumber("k"));
     }
 
     @Test
     void higherProposalUpdatesPromise() {
-        acceptor.propose(2.0f);
+        acceptor.propose("k", 2.0f);
 
-        acceptor.propose(7.0f);
+        acceptor.propose("k", 7.0f);
 
-        assertEquals(7.0f, acceptor.promisedSequenceNumber());
+        assertEquals(7.0f, acceptor.promisedSequenceNumber("k"));
     }
 
     @Test
     void acceptBelowPromiseIsIgnored() {
-        acceptor.propose(5.0f);
+        acceptor.propose("k", 5.0f);
 
         Packet response = acceptor.accept(1.0f, put("k", "v"));
 
         assertEquals("Ignored", response.getResponse());
-        assertEquals(KeyValueStore.MISSING_KEY_SENTINEL, kv.get("k"),
+        assertEquals(KeyValueStore.MISSING_KEY_SENTINEL, kv.Get("k"),
                 "Ignored Accept must not mutate the store");
+    }
+
+    @Test
+    void freshAcceptorPromisesWithNoAcceptedValue() {
+        Promise promise = acceptor.propose("k", 1.0f);
+
+        assertTrue(promise.isPromised());
+        assertFalse(promise.hasAcceptedValue(),
+                "a fresh acceptor has nothing accepted to report");
+        assertNull(promise.getAcceptedBallot());
+    }
+
+    @Test
+    void promiseReportsPreviouslyAcceptedValue() {
+        acceptor.propose("k", 1.0f);
+        acceptor.accept(1.0f, put("k", "v"));
+        Promise promise = acceptor.propose("k", 2.0f);
+        assertTrue(promise.isPromised());
+        assertTrue(promise.hasAcceptedValue());
+        assertEquals(1.0f, promise.getAcceptedBallot().floatValue());
+        assertEquals("v", promise.getAcceptedValue().getValue());
+    }
+
+    @Test
+    void advanceInstanceClearsAcceptedValueSoNextRoundStartsFresh() {
+        acceptor.propose("k", 1.0f);
+        acceptor.accept(1.0f, put("k", "v"));
+        acceptor.advanceInstance("k");
+        Promise promise = acceptor.propose("k", 2.0f);
+
+        assertTrue(promise.isPromised());
+        assertFalse(promise.hasAcceptedValue(),
+                "a committed value must be cleared so the next instance starts fresh");
+        assertNull(promise.getAcceptedBallot());
+        assertEquals(2.0f, acceptor.promisedSequenceNumber("k"),
+                "the promise number stays monotonic across the instance boundary");
+    }
+
+    @Test
+    void acceptRecordsButDoesNotApplyBeforeCommit() {
+        acceptor.propose("k", 1.0f);
+        Packet response = acceptor.accept(1.0f, put("k", "v"));
+
+        assertEquals("Accepted", response.getResponse());
+        assertEquals(KeyValueStore.MISSING_KEY_SENTINEL, kv.Get("k"),
+                "a single acceptor's accept must not commit to the store before a majority");
+    }
+
+    @Test
+    @Tag("spec")
+    void unrelatedKeysDoNotShareConsensusState() {
+        acceptor.propose("alpha", 5.0f);
+
+        Promise p = acceptor.propose("beta", 2.0f);
+
+        assertTrue(p.isPromised(),
+                "an unrelated key's ballot must not be blocked by another key's promise");
+    }
+
+    @Test
+    void equalBallotDoesNotRejectAndKeepsPromise() {
+        acceptor.propose("k", 5.0f);
+
+        Promise p = acceptor.propose("k", 5.0f);
+
+        assertTrue(p.isPromised(),
+                "an equal ballot is not below the promise, so it is not rejected (impl guards id < promised)");
+        assertEquals(5.0f, acceptor.promisedSequenceNumber("k"));
+    }
+
+    @Test
+    void acceptReturnsNullWhenFailRateForcesDrop() {
+        new PaxosConfig(1.0f, 0f);
+        acceptor.propose("k", 1.0f);
+
+        assertNull(acceptor.accept(1.0f, put("k", "v")),
+                "a forced accept failure must drop the packet (return null)");
+        assertEquals(KeyValueStore.MISSING_KEY_SENTINEL, kv.Get("k"));
+    }
+
+    @Test
+    void advanceInstanceOnUnknownKeyIsNoOp() {
+        acceptor.advanceInstance("never-seen");
+
+        assertNull(acceptor.promisedSequenceNumber("never-seen"));
+    }
+
+    @Test
+    void higherPromiseThenStaleAcceptIsIgnoredAndPromiseSurvives() {
+        acceptor.propose("k", 5.0f);
+
+        Packet response = acceptor.accept(1.0f, put("k", "stale"));
+
+        assertEquals("Ignored", response.getResponse(),
+                "an accept below the promised ballot must be ignored");
+        assertEquals(KeyValueStore.MISSING_KEY_SENTINEL, kv.Get("k"),
+                "an ignored accept must not mutate the store");
+        assertEquals(5.0f, acceptor.promisedSequenceNumber("k"),
+                "the higher promise must survive a rejected lower accept");
     }
 }

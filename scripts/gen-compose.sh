@@ -38,8 +38,12 @@ services:
       JAVA_TOOL_OPTIONS: "-Djava.rmi.server.hostname=node0"
       ACCEPT_FAIL: "${ACCEPT_FAIL}"
       PROPOSE_FAIL: "${PROPOSE_FAIL}"
+      MSG_LOSS: "${MSG_LOSS}"
+      LOG_DIR: "/app/logs/node0"
     command: ["0", "node0", "1099", "node0", "1099", "--init"]
     networks: [paxos_net]
+    volumes:
+      - ./logs/node0:/app/logs/node0
     stop_grace_period: 3s
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/1099 && exec 3<&-"]
@@ -61,8 +65,12 @@ while [ "$i" -lt "$CLUSTER_SIZE" ]; do
       JAVA_TOOL_OPTIONS: "-Djava.rmi.server.hostname=node$i"
       ACCEPT_FAIL: "\${ACCEPT_FAIL}"
       PROPOSE_FAIL: "\${PROPOSE_FAIL}"
+      MSG_LOSS: "\${MSG_LOSS}"
+      LOG_DIR: "/app/logs/node$i"
     command: ["$i", "node$i", "1099", "node0", "1099"]
     networks: [paxos_net]
+    volumes:
+      - ./logs/node$i:/app/logs/node$i
     stop_grace_period: 3s
     depends_on:
       node0:

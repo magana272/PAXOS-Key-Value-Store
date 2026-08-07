@@ -23,7 +23,7 @@ public class KeyValueStoreTest {
             for (int i = 0; i < writers; i++) {
                 final String value = "v" + i;
                 pool.submit(() -> {
-                    if (kv.put("contended", value)) {
+                    if (kv.Put("contended", value)) {
                         successes.incrementAndGet();
                     }
                 });
@@ -36,7 +36,7 @@ public class KeyValueStoreTest {
 
         assertEquals(1, successes.get(),
                 "exactly one putter must win when many race on the same key");
-        String winner = kv.get("contended");
+        String winner = kv.Get("contended");
         assertNotNull(winner);
         assertTrue(winner.startsWith("v"), "winner should be one of the proposed values");
     }
@@ -45,6 +45,6 @@ public class KeyValueStoreTest {
     public void getOnUnknownKeyReturnsSentinel() {
         KeyValueStore kv = new KeyValueStore();
 
-        assertEquals(KeyValueStore.MISSING_KEY_SENTINEL, kv.get("nope"));
+        assertEquals(KeyValueStore.MISSING_KEY_SENTINEL, kv.Get("nope"));
     }
 }
