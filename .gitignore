@@ -25,6 +25,14 @@ Thumbs.db
 # Logs
 *.log
 hs_err_pid*.log
+logs/
+
+# Generated metrics and run data (reproducible via make saturation/validate)
+metrics/
+
+# Python caches
+__pycache__/
+*.pyc
 
 # Generated docker compose (rebuilt from .env by scripts/gen-compose.sh)
 docker-compose.yml
