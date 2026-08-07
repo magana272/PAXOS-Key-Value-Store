@@ -40,6 +40,25 @@ PROPOSE_FAIL=0.0   # legacy: currently unused (no-op)
 - **`MSG_LOSS`** is real network message loss: each outgoing Propose / Accept is dropped with this probability (`RmiTransport.lookupWithLoss`). The proposer retries with a fresh ballot, so loss is transient, not fatal. This is the knob the validation harness drives. Cluster join and the post-consensus Commit use a plain lookup that is never dropped, so a chosen value is never lost.
 - **`ACCEPT_FAIL`** and **`PROPOSE_FAIL`** are legacy fault-injection knobs. They are **not currently wired** into the running code (`PaxosConfig.acceptorFailRate` is never set from `Node`), so they are effectively no-ops; use `MSG_LOSS` to exercise the retry path.
 
+## Paxos, intuitively
+
+Skip this if you already know Paxos -- it is the mental model, not the code.
+
+**The problem.** One node holding the data is a single point of failure. Copy the data to several nodes and a new problem appears: two clients write the same key at once, or a message is lost, and the copies disagree. We need the cluster to agree on *one* value for each write and never un-decide it, even when some nodes crash or drop messages.
+
+**One decision at a time (single-decree Paxos).** Paxos gets a group to agree on a single value in two round trips driven by a *proposer*:
+
+1. **Prepare / Promise.** The proposer picks an always-increasing ballot number `n` and asks every *acceptor*: "promise not to accept anything older than `n`?" An acceptor that has not already promised something higher says yes -- and reports any value it has already accepted.
+2. **Accept.** Once a **majority** promises, the proposer sends `accept(n, value)`. If some acceptor already had an accepted value, the proposer must reuse the one tied to the highest ballot (the safety rule). When a majority accepts, the value is **chosen** -- final.
+
+**Why a majority is the magic number.** Any two majorities of the same cluster share at least one acceptor. So once a value is chosen, every later proposer's Prepare hits at least one acceptor that saw it, learns it, and re-proposes the same value. A chosen value can never be lost or overwritten -- that overlap is the whole trick. It also means the cluster keeps working while a majority is alive: `floor((N-1)/2)` nodes can be down.
+
+**Why ballots.** The increasing `n` is what stops two proposers from choosing different values. A proposer with a stale ballot is rejected at Prepare and retries with a higher number, and the higher ballot always learns about anything already chosen. No locks, no coordinator -- just monotonic numbers and majority overlap.
+
+**Multi-Paxos: stop paying for Phase 1.** Real systems decide a *stream* of values (a replicated log), not one. Running Prepare before every decision is wasteful. **Multi-Paxos** elects a stable leader once, runs Phase 1 a single time to own the ballot, then skips straight to Accept for every following value; Phase 1 only returns when the leader changes. That is how Paxos becomes a practical replicated log.
+
+**How this project maps to it.** Every node is proposer, acceptor, and learner at once, and one node is elected leader (max-ID wins) to drive writes -- the Multi-Paxos idea of a stable leader. Instead of one shared log, **each key is its own independent single-decree instance**, so writes to different keys never contend. Reads skip consensus entirely: the leader answers a GET from its own copy, since it drove every write and holds the authoritative value. The sections below are the same story with the real class names.
+
 ## Overview of Paxos
 
 Every node in the cluster runs all three Paxos roles at once: it is a **Proposer**, an **Acceptor**, and a **Learner**. One node is elected **Leader** and is the only one that drives client transactions; `Leader.java` (which wraps `LeaderElection`) resolves the current leader and forwards each transaction to it.
