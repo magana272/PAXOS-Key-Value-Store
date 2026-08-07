@@ -1,13 +1,19 @@
 flowchart TD
-    Req([Client request]):::client --> Lookup["Node receives Put/Get/Delete"]:::acceptor
-    Lookup --> Alive{"leader.isAlive?"}
+    Req([Client PUT/GET/DELETE]):::client --> Recv["Node receives request (ClientRpc)"]:::acceptor
+    Recv --> Alive{"leader.isAlive?"}
     Alive -- no --> Elect["LeaderElection.elect (max-ID wins)"]:::fail
     Elect --> Forward
-    Alive -- yes --> Forward["Forward TransactionPacket to leader (hasTransaction)"]:::leader
-    Forward --> Propose["PaxosProposer: Phase 1 Propose<br/>(collect Ack majority via RmiTransport)"]:::leader
-    Propose --> Accept["PaxosProposer: Phase 2 Accept<br/>(strict majority, ACCEPT_FAIL applied)"]:::leader
-    Accept --> Apply["Paxosacceptor.Accept broadcasts Learn,<br/>PaxosLearner.apply mutates KeyValueStore"]:::leader
-    Apply --> Resp([Packet response to client]):::client
+    Alive -- yes --> Forward["Forward TransactionPacket to leader<br/>(ConsensusRpc.hasTransaction)"]:::leader
+    Forward --> Kind{read or write?}
+    Kind -- "GET (read)" --> LocalRead["Leader reads its own KeyValueStore"]:::leader
+    Kind -- "PUT / DELETE (write)" --> Propose["Phase 1 Prepare: AcceptorRpc.Propose<br/>strict-majority Promise via Transport"]:::leader
+    Propose --> Accept["Phase 2 Accept: chooseAcceptedValue,<br/>strict-majority Accepted"]:::leader
+    Accept --> Commit["Phase 3 Commit: LearnerRpc.Commit on every replica<br/>PaxosLearner applies StoreOperation, CommitLog.append"]:::leader
+    Propose -. majority missed .-> Retry["retry with fresh ballot<br/>(&lt;= PROPOSER_MAX_ATTEMPTS)"]:::fail
+    Accept -. majority missed .-> Retry
+    Retry --> Propose
+    Commit --> Resp
+    LocalRead --> Resp([Response to client]):::client
     classDef client fill:#bbdefb,stroke:#1976d2,color:#0d47a1
     classDef leader fill:#ffd54f,stroke:#f57c00,color:#bf360c
     classDef acceptor fill:#c8e6c9,stroke:#388e3c,color:#1b5e20

@@ -44,6 +44,25 @@ PROPOSE_FAIL=0.0   # legacy: currently unused (no-op)
 
 Every node in the cluster runs all three Paxos roles at once: it is a **Proposer**, an **Acceptor**, and a **Learner**. One node is elected **Leader** and is the only one that drives client transactions; `Leader.java` (which wraps `LeaderElection`) resolves the current leader and forwards each transaction to it.
 
+### Node internals (role-segregated RPC)
+
+`BaseServer` -- the single RMI stub every node exports -- is composed of five focused remote interfaces instead of one monolith, so each Paxos role owns its own contract:
+
+| Interface | Methods | Role |
+|-----------|---------|------|
+| `ClientRpc` | `Put` / `Get` / `Delete` | client entry points |
+| `ConsensusRpc` | `hasTransaction` | leader drives one decree |
+| `AcceptorRpc` | `Propose` / `Accept` | Phase 1 / Phase 2 |
+| `LearnerRpc` | `Commit` / `Learn` | Phase 3 apply |
+| `MembershipRpc` | `join` / `inform` / `isAlive` | cluster view + health |
+
+Supporting types sit behind those roles:
+
+- **`StoreOperation`** -- `PaxosLearner` applies each committed packet through a `GetOperation` / `PutOperation` / `DeleteOperation` strategy (keyed by request `TYPE`) instead of a switch, so the mutation for each request type lives in one place.
+- **`AbstractAcceptor` / `AbstractLearner`** -- hold the per-key register bookkeeping and the apply loop; `PaxosAcceptor` / `PaxosLearner` are the RMI-exported subclasses.
+- **`Transport`** -- the cluster layer reaches peers through this interface (`lookup` / `lookupWithLoss` / `invalidate`); `RmiTransport` is the RMI implementation and the single place `MSG_LOSS` is applied.
+- **`CommitLog`** -- every `Commit` appends the applied request to `logs/<cluster>/<node>/log.txt`, an append-only per-node record of what was chosen.
+
 ### Per-key consensus (parallel decrees)
 
 Rather than one global consensus register, **each key is an independent single-decree Paxos instance**:
